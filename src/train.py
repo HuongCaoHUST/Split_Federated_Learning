@@ -18,6 +18,24 @@ from model.Alexnet import AlexNet
 from model.Mobilenet import MobileNet
 from src.utils import save_results, save_plots
 
+def create_run_dir(project_root):
+    """
+    Creates a new directory for the current run to save results.
+    """
+    results_dir = os.path.join(project_root, 'results')
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Find the next available run directory
+    run_idx = 1
+    while os.path.exists(os.path.join(results_dir, f'run_{run_idx}')):
+        run_idx += 1
+    
+    run_dir = os.path.join(results_dir, f'run_{run_idx}')
+    os.makedirs(run_dir)
+    
+    print(f"Created run directory: {run_dir}")
+    return run_dir
+
 def load_config_and_setup(project_root):
     """
     Tải cấu hình, thiết lập device và trả về các thông số.
@@ -83,6 +101,9 @@ def prepare_data(config, project_root):
 
 if __name__ == '__main__':
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Create a new run directory
+    run_dir = create_run_dir(project_root)
 
     # =============================================================================
     # 1. & 2. Tải cấu hình và Chuẩn bị dữ liệu
@@ -170,7 +191,7 @@ if __name__ == '__main__':
     # =============================================================================
     # 5. Lưu Model
     # =============================================================================
-    save_path = os.path.join(project_root, MODEL_SAVE_PATH)
+    save_path = os.path.join(run_dir, MODEL_SAVE_PATH)
     torch.save(model.state_dict(), save_path)
     print(f"Model saved to {save_path}")
 
@@ -182,5 +203,5 @@ if __name__ == '__main__':
         'val_loss': history_val_loss,
         'val_accuracy': history_val_accuracy
     }
-    save_results(results, project_root)
-    save_plots(history_train_loss, history_val_loss, history_val_accuracy, project_root)
+    save_results(results, run_dir)
+    save_plots(history_train_loss, history_val_loss, history_val_accuracy, run_dir)
