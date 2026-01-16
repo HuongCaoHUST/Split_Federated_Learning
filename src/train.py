@@ -12,17 +12,16 @@ from torch.utils.data import SubsetRandomSampler
 
 # Thêm đường dẫn thư mục gốc của dự án vào sys.path
 # để có thể import các module từ thư mục 'model'
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(project_root)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model.Alexnet import AlexNet
 from model.Mobilenet import MobileNet
 from src.utils import save_results, save_plots
 
-if __name__ == '__main__':
-    # =============================================================================
-    # 1. Thiết lập cấu hình và Hyperparameters
-    # =============================================================================
+def load_config_and_setup(project_root):
+    """
+    Tải cấu hình, thiết lập device và trả về các thông số.
+    """
     # Tải cấu hình từ file config.yaml
     config_path = os.path.join(project_root, 'config.yaml')
     with open(config_path, 'r') as f:
@@ -31,19 +30,16 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
-    # Hyperparameters từ file config
-    NUM_EPOCHS = config['training']['num_epochs']
-    BATCH_SIZE = config['training']['batch_size']
-    LEARNING_RATE = config['training']['learning_rate']
-    MODEL_NAME = config['model']['name']
-    MODEL_SAVE_PATH = config['model']['save_path']
-    VALIDATION_SPLIT = config['dataset']['validation_split']
+    return config, device
 
-    # =============================================================================
-    # 2. Chuẩn bị dữ liệu
-    # =============================================================================
+def prepare_data(config, project_root):
+    """
+    Chuẩn bị và chia dữ liệu, trả về DataLoaders.
+    """
     print("Preparing data...")
     data_path = os.path.join(project_root, 'data')
+    validation_split = config['dataset']['validation_split']
+    batch_size = config['training']['batch_size']
 
     transform = transforms.Compose(
         [transforms.Resize((227, 227)),
@@ -56,7 +52,7 @@ if __name__ == '__main__':
     # Tạo samplers để chia train/validation
     num_train = len(train_dataset)
     indices = list(range(num_train))
-    split = int(np.floor(VALIDATION_SPLIT * num_train))
+    split = int(np.floor(validation_split * num_train))
     
     np.random.seed(42) # Để đảm bảo chia giống nhau mỗi lần chạy
     np.random.shuffle(indices)
@@ -66,13 +62,29 @@ if __name__ == '__main__':
     train_sampler = SubsetRandomSampler(train_indices)
     valid_sampler = SubsetRandomSampler(val_indices)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE,
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
                                                sampler=train_sampler, num_workers=2)
-    validation_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE,
+    validation_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
                                                     sampler=valid_sampler, num_workers=2)
     print("Data prepared.")
     print(f"{len(train_indices)} training images, {len(val_indices)} validation images.")
+    
+    return train_loader, validation_loader
 
+if __name__ == '__main__':
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # =============================================================================
+    # 1. & 2. Tải cấu hình và Chuẩn bị dữ liệu
+    # =============================================================================
+    config, device = load_config_and_setup(project_root)
+    train_loader, validation_loader = prepare_data(config, project_root)
+
+    # Lấy các hyperparameters từ config
+    NUM_EPOCHS = config['training']['num_epochs']
+    LEARNING_RATE = config['training']['learning_rate']
+    MODEL_NAME = config['model']['name']
+    MODEL_SAVE_PATH = config['model']['save_path']
 
     # =============================================================================
     # 3. Khởi tạo Model, Loss và Optimizer

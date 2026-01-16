@@ -11,3 +11,5 @@
 data/*
 # ...but re-include the class_names file.
 !data/class_names
+/model/__pycache__
+/src/__pycache__
