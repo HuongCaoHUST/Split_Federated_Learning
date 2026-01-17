@@ -21,7 +21,7 @@ class Dataset:
         self.validation_split = self.dataset_config.get('validation_split', 0.1)
         self.subset_fraction = self.dataset_config.get('subset_fraction', 1.0)
         
-        # Các thuộc tính lưu trữ Dataset và DataLoader riêng biệt
+        # Attributes to store Dataset objects
         self.train_dataset = None
         self.val_dataset = None
 
@@ -60,7 +60,7 @@ class Dataset:
 
     def prepare_datasets(self):
         """
-        Chuẩn bị dữ liệu: Tải về, chia tách Train/Val và tạo các object Dataset (Subset).
+        Prepare data: Download, split Train/Val, and create Dataset objects (Subset).
         """
         if self.train_dataset is not None:
             return self.train_dataset, self.val_dataset
@@ -69,18 +69,18 @@ class Dataset:
         transform = self.get_transforms()
         full_dataset = self._load_raw_dataset(transform)
 
-        # Tính toán kích thước chia
+        # Calculate split sizes
         total_size = len(full_dataset)
         val_size = int(np.floor(self.validation_split * total_size))
         train_size = total_size - val_size
 
-        # Chia dataset sử dụng random_split (chuẩn PyTorch)
-        generator = torch.Generator().manual_seed(42) # Đảm bảo tính tái lập
+        # Split dataset using random_split (standard PyTorch)
+        generator = torch.Generator().manual_seed(42) # Ensure reproducibility
         self.train_dataset, self.val_dataset = random_split(
             full_dataset, [train_size, val_size], generator=generator
         )
 
-        # Xử lý lấy tập con (nếu cấu hình yêu cầu chạy thử trên ít dữ liệu)
+        # Handle subset creation (if config requests running on less data)
         if self.subset_fraction < 1.0:
             self.train_dataset = self._create_subset(self.train_dataset, self.subset_fraction)
             self.val_dataset = self._create_subset(self.val_dataset, self.subset_fraction)
@@ -90,7 +90,7 @@ class Dataset:
         return self.train_dataset, self.val_dataset
 
     def _create_subset(self, dataset, fraction):
-        """Hàm phụ trợ để cắt nhỏ dataset."""
+        """Helper function to create a subset of the dataset."""
         subset_size = int(len(dataset) * fraction)
         indices = list(range(subset_size))
         return Subset(dataset, indices)
