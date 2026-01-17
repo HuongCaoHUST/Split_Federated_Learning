@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model.Alexnet import AlexNet
 from model.Mobilenet import MobileNet
+from model.VGG16 import VGG16
 from src.utils import _load_class_names_from_file, count_parameters # Import from utils
 
 # Supported image extensions
@@ -34,8 +35,17 @@ def predict_image(model, device, preprocess, class_names, input_channels, image_
 
     image_tensor = preprocess(image)
 
+    # Determine model input channels safely
+    model_in_channels = 3 # Default assumption
+    if hasattr(model, 'features') and len(model.features) > 0 and isinstance(model.features[0], torch.nn.Conv2d):
+        model_in_channels = model.features[0].in_channels
+    elif hasattr(model, 'conv1') and isinstance(model.conv1, torch.nn.Conv2d):
+        model_in_channels = model.conv1.in_channels
+    elif hasattr(model, 'conv1_1') and isinstance(model.conv1_1, torch.nn.Conv2d):
+        model_in_channels = model.conv1_1.in_channels
+
     # If model expects 3 channels but input is 1, repeat the channel
-    if model.features[0].in_channels == 3 and image_tensor.shape[0] == 1:
+    if model_in_channels == 3 and image_tensor.shape[0] == 1:
         image_tensor = image_tensor.repeat(3, 1, 1)
 
     # Add batch dimension
@@ -148,6 +158,8 @@ def predict(opt):
         model = AlexNet(num_classes=num_classes)
     elif model_name == 'MobileNet':
         model = MobileNet(num_classes=num_classes)
+    elif model_name == 'VGG16':
+        model = VGG16(num_classes=num_classes)
     else:
         raise ValueError(f"Model '{model_name}' not supported.")
 

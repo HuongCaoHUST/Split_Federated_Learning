@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from model.Alexnet import AlexNet
 from model.Mobilenet import MobileNet
+from model.VGG16 import VGG16
 from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir
 from src.dataset import Dataset
 
@@ -63,7 +64,8 @@ class Trainer:
         print(f"Initializing model: {self.model_name}...")
         model_map = {
             'AlexNet': AlexNet,
-            'MobileNet': MobileNet
+            'MobileNet': MobileNet,
+            'VGG16': VGG16
         }
 
         if self.model_name not in model_map:

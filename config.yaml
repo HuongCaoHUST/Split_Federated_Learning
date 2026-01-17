@@ -4,7 +4,7 @@ training:
   learning_rate: 0.001
 
 model:
-  name: 'AlexNet'
+  name: 'VGG16'
   save_path: 'cifar_net.pth'
   save_model: false
 
