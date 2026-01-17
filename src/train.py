@@ -7,51 +7,44 @@ from tqdm import tqdm
 
 from model.Alexnet import AlexNet
 from model.Mobilenet import MobileNet
-from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir, load_config_and_setup
+from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir
 from src.dataset_loader import DatasetLoader
 
-if __name__ == '__main__':
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
+def train(config, device, num_classes, project_root):
     # Create a new run directory
     run_dir = create_run_dir(project_root)
-
-    # =============================================================================
-    # 1. & 2. Tải cấu hình và Chuẩn bị dữ liệu
-    # =============================================================================
-    config, device, num_classes = load_config_and_setup(project_root)
     
+    # Create Dataloader
     dataset_loader = DatasetLoader(config, project_root)
     train_loader, validation_loader = dataset_loader.get_loaders()
 
-    # Lấy các hyperparameters từ config
+    # Set yperparameters
     NUM_EPOCHS = config['training']['num_epochs']
     LEARNING_RATE = config['training']['learning_rate']
     MODEL_NAME = config['model']['name']
     MODEL_SAVE_PATH = config['model']['save_path']
     SAVE_MODEL = config['model'].get('save_model', True) # Get new config option
 
-    # =============================================================================
-    # 3. Khởi tạo Model, Loss và Optimizer
-    # =============================================================================
+    # Initialize model
     print(f"Initializing model: {MODEL_NAME}...")
-    if MODEL_NAME == 'AlexNet':
-        model = AlexNet(num_classes=num_classes).to(device)
-    elif MODEL_NAME == 'MobileNet':
-        model = MobileNet(num_classes=num_classes).to(device)
-    else:
-        print(f"Error: Model '{MODEL_NAME}' not recognized. Exiting.")
-        sys.exit()
+    model_map = {
+        'AlexNet': AlexNet,
+        'MobileNet': MobileNet
+    }
+
+    if MODEL_NAME not in model_map:
+        print(f"Error: Model '{MODEL_NAME}' not recognized. Supported models: {list(model_map.keys())}")
+        sys.exit(1)
+    model = model_map[MODEL_NAME](num_classes=num_classes).to(device)
 
     print(f"Model Parameters: {count_parameters(model):,}") # Log model parameters here
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     print("Model initialized.")
 
-    # =============================================================================
-    # 4. Vòng lặp Training và Validation
-    # =============================================================================
+    # Init Loss and Optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # Training Loop
     print("Starting Training...")
     history_train_loss = []
     history_val_loss = []
@@ -100,16 +93,12 @@ if __name__ == '__main__':
         history_val_loss.append(avg_val_loss)
         history_val_accuracy.append(val_accuracy)
         
-        # Cập nhật kết quả vào CSV sau mỗi epoch
+        # Log to CSV
         update_results_csv(epoch + 1, avg_train_loss, avg_val_loss, val_accuracy, run_dir)
-        
         print(f'Epoch [{epoch+1}/{NUM_EPOCHS}] -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}, Val Acc: {val_accuracy:.2f}%')
-
     print("Finished Training.")
 
-    # =============================================================================
-    # 5. Lưu Model và Vẽ biểu đồ
-    # =============================================================================
+    # Save model
     if SAVE_MODEL: # Conditional saving
         save_path = os.path.join(run_dir, MODEL_SAVE_PATH)
         torch.save(model.state_dict(), save_path)

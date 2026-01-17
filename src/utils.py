@@ -110,12 +110,11 @@ def create_run_dir(project_root):
     print(f"Created run directory: {run_dir}")
     return run_dir
 
-def load_config_and_setup(project_root):
+def load_config_and_setup(config_path, project_root):
     """
     Tải cấu hình, thiết lập device và trả về các thông số.
     """
     # Tải cấu hình từ file config.yaml
-    config_path = os.path.join(project_root, 'config.yaml')
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
