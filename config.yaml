@@ -10,4 +10,4 @@ model:
 dataset:
   name: 'CIFAR10' # 'CIFAR10' or 'MNIST'
   validation_split: 0.1
-  subset_fraction: 0.01
+  subset_fraction: 0.001

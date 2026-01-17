@@ -44,7 +44,13 @@ def _load_class_names_from_file(file_path):
         sys.exit(1)
     return class_names
 
-def predict_image(model, device, preprocess, class_names, input_channels, image_path, model_name):
+def count_parameters(model):
+    """
+    Counts the total number of trainable parameters in a PyTorch model.
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def predict_image(model, device, preprocess, class_names, input_channels, image_path):
     """
     Runs prediction on a single image using a trained model.
     """
@@ -52,10 +58,10 @@ def predict_image(model, device, preprocess, class_names, input_channels, image_
         image = Image.open(image_path).convert('RGB') if input_channels == 3 else Image.open(image_path).convert('L')
     except FileNotFoundError:
         print(f"Error: Input image not found at '{image_path}'")
-        return None, None, None, None
+        return None, None, None
     except Exception as e:
         print(f"Error loading image {image_path}: {e}")
-        return None, None, None, None
+        return None, None, None
 
     image_tensor = preprocess(image)
 
@@ -77,30 +83,37 @@ def predict_image(model, device, preprocess, class_names, input_channels, image_
     predicted_class = class_names[predicted_idx.item()]
     inference_time = end_time - start_time
 
-    return predicted_class, confidence.item(), inference_time, image_path
+    return predicted_class, confidence.item(), inference_time
 
-def predict_directory(opt, model, device, preprocess, class_names, input_channels, model_name):
+def predict_source(opt, model, device, preprocess, class_names, input_channels, model_name):
     """
-    Runs prediction on all images in a given directory.
+    Handles prediction for either a single image or a directory of images.
     """
     image_files = []
-    for root, _, files in os.walk(opt.source):
-        for file in files:
-            if file.lower().endswith(IMAGE_EXTENSIONS):
-                image_files.append(os.path.join(root, file))
+    if os.path.isfile(opt.source):
+        image_files.append(opt.source)
+    elif os.path.isdir(opt.source):
+        for root, _, files in os.walk(opt.source):
+            for file in files:
+                if file.lower().endswith(IMAGE_EXTENSIONS):
+                    image_files.append(os.path.join(root, file))
+    else:
+        print(f"Error: Source '{opt.source}' is neither a file nor a directory.")
+        sys.exit(1)
 
     if not image_files:
         print(f"No supported image files found in '{opt.source}'")
         sys.exit(1)
 
-    print(f"\n--- Predicting for images in directory: {opt.source} ---")
     all_predictions = []
     total_inference_time = 0
     total_images = len(image_files)
 
+    print(f"\n--- Predicting for {'single image' if total_images == 1 else 'images'} in: {opt.source} ---")
+    
     for i, img_path in enumerate(image_files):
-        predicted_class, confidence, inference_time, _ = predict_image(
-            model, device, preprocess, class_names, input_channels, img_path, model_name
+        predicted_class, confidence, inference_time = predict_image(
+            model, device, preprocess, class_names, input_channels, img_path
         )
         if predicted_class:
             all_predictions.append({
@@ -112,14 +125,24 @@ def predict_directory(opt, model, device, preprocess, class_names, input_channel
                 "total": total_images
             })
             total_inference_time += inference_time
-    
+
     print(f"\nModel Name: {model_name}")
-    print(f"Number of Images: {len(image_files)}")
+    print(f"Model Parameters: {count_parameters(model):,}")
+    print(f"Number of Images: {total_images}")
     print(f"Input Size: 224x224")
     print(f"Total Inference Speed: {total_inference_time:.4f} seconds")
-    print("\nIndividual Predictions:")
-    for pred in all_predictions:
-        print(f"  [{pred['index']}/{pred['total']}] Image: {pred['image']}, Prediction: {pred['prediction']}, Confidence: {pred['confidence']:.4f}, Time: {pred['inference_time']:.4f}s")
+    
+    if total_images > 1:
+        print("\nIndividual Predictions:")
+        for pred in all_predictions:
+            print(f"  [{pred['index']}/{pred['total']}] Image: {pred['image']}, Prediction: {pred['prediction']}, Confidence: {pred['confidence']:.4f}, Time: {pred['inference_time']:.4f}s")
+    elif total_images == 1:
+        # For a single image, print directly without "Individual Predictions" header
+        pred = all_predictions[0]
+        print(f"Prediction: {pred['prediction']}")
+        print(f"Confidence: {pred['confidence']:.4f}")
+        print(f"Inference Speed: {pred['inference_time']:.4f} seconds")
+    
     print("-----------------------------------------------------")
 
 
@@ -140,7 +163,7 @@ def predict(opt):
         normalize = transforms.Normalize((0.1307,), (0.3081,))
         input_channels = 1
     elif dataset_name.upper() == 'CIFAR10':
-        class_names_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'class_names')
+        class_names_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'class_names.py')
         class_names = _load_class_names_from_file(class_names_file_path)
         normalize = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         input_channels = 3
@@ -176,24 +199,8 @@ def predict(opt):
     ])
 
     # --- 4. Handle Source (Single Image or Directory) ---
-    if os.path.isfile(opt.source):
-        print(f"--- Predicting for single image: {opt.source} ---")
-        predicted_class, confidence, inference_time, _ = predict_image(
-            model, device, preprocess, class_names, input_channels, opt.source, model_name
-        )
-        if predicted_class:
-            print(f"Model Name: {model_name}")
-            print(f"Number of Images: 1")
-            print(f"Input Size: 224x224")
-            print(f"Prediction: {predicted_class}")
-            print(f"Confidence: {confidence:.4f}")
-            print(f"Inference Speed: {inference_time:.4f} seconds")
-        print("-----------------------------------------------------")
-    elif os.path.isdir(opt.source):
-        predict_directory(opt, model, device, preprocess, class_names, input_channels, model_name)
-    else:
-        print(f"Error: Source '{opt.source}' is neither a file nor a directory.")
-        sys.exit(1)
+    predict_source(opt, model, device, preprocess, class_names, input_channels, model_name)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run prediction on an image or a directory of images.")

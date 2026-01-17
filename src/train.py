@@ -44,6 +44,12 @@ def _load_class_names_from_file(file_path):
         sys.exit(1)
     return class_names
 
+def count_parameters(model):
+    """
+    Counts the total number of trainable parameters in a PyTorch model.
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def create_run_dir(project_root):
     """
     Creates a new directory for the current run to save results.
@@ -78,7 +84,7 @@ def load_config_and_setup(project_root):
     if dataset_name.upper() == 'MNIST':
         class_names = [str(i) for i in range(10)]
     else:
-        class_names_file_path = os.path.join(project_root, 'data', 'class_names')
+        class_names_file_path = os.path.join(project_root, 'data', 'class_names.py')
         class_names = _load_class_names_from_file(class_names_file_path)
     
     num_classes = len(class_names)
@@ -179,6 +185,8 @@ if __name__ == '__main__':
     else:
         print(f"Error: Model '{MODEL_NAME}' not recognized. Exiting.")
         sys.exit()
+
+    print(f"Model Parameters: {count_parameters(model):,}") # Log model parameters here
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
