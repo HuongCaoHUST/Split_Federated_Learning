@@ -29,6 +29,8 @@ class Trainer:
         self.num_workers = 2
         self.num_epochs = config['training']['num_epochs']
         self.learning_rate = config['training']['learning_rate']
+        self.optimizer_name = config['training'].get('optimizer', 'Adam')
+        self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['name']
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
@@ -60,7 +62,12 @@ class Trainer:
         
         # Init Loss and Optimizer
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        if self.optimizer_name.lower() == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=self.momentum)
+        elif self.optimizer_name.lower() == 'adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        else:
+            raise ValueError(f"Optimizer {self.optimizer_name} not supported. Please choose 'SGD' or 'Adam'.")
 
         # History tracking
         self.history_train_loss = []

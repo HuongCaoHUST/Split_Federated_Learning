@@ -2,6 +2,8 @@ training:
   num_epochs: 5
   batch_size: 32  
   learning_rate: 0.001
+  optimizer: 'SGD' # Adam or SGD
+  momentum: 0.9
 
 model:
   name: 'VGG16'
@@ -14,7 +16,7 @@ dataset:
   subset_fraction: 0.001
 
 rabbitmq:
-  host: 'localhost'
+  host: 'rabbitmq'
   port: 5672
   username: 'guest'
   password: 'guest'
