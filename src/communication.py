@@ -73,9 +73,23 @@ class Communication:
             self.channel.basic_publish(exchange='',
                                        routing_key=queue_name,
                                        body=message)
-            print(f" [x] Sent message to '{queue_name}'")
+            print(f" [>>>] Sent message to '{queue_name}'")
         else:
             print("Error: Channel is not initialized. Please call connect() first.")
+
+    def consume_message_sync(self, queue_name):
+        """
+        Consume a single message from a queue in a blocking manner.
+        """
+        if self.channel:
+            while True:
+                method_frame, header_frame, body = self.channel.basic_get(queue=queue_name, auto_ack=True)
+                if method_frame:
+                    print(f" [<<<] Received message from '{queue_name}'")
+                    return body
+        else:
+            print("Error: Channel is not initialized. Please call connect() first.")
+            return None
 
     def consume_messages(self, queue_name, callback):
         """

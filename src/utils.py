@@ -6,7 +6,7 @@ import sys # Added for sys.exit
 import yaml
 import torch
 
-def update_results_csv(epoch, train_loss, val_loss, val_accuracy, save_dir):
+def update_results_csv(epoch, train_loss, val_loss=None, val_accuracy=None, save_dir = './results'):
     """
     Appends the latest epoch results to a CSV file.
     Creates the file and writes the header on the first call.
