@@ -28,7 +28,7 @@ class TrainerEdge:
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root)
         self.batch_size = config['training']['batch_size']
-        self.num_workers = 2
+        self.num_workers = 0
         self.num_epochs = config['training']['num_epochs']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
@@ -179,7 +179,7 @@ class TrainerServer:
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root)
         self.batch_size = config['training']['batch_size']
-        self.num_workers = 2
+        self.num_workers = 0
         self.num_epochs = config['training']['num_epochs']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
@@ -230,7 +230,7 @@ class TrainerServer:
     def train_one_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
-        train_progress_bar = tqdm(range(2), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        train_progress_bar = tqdm(range(1407), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for i in train_progress_bar:
             body = self.comm.consume_message_sync('intermediate_queue')

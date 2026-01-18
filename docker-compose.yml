@@ -9,6 +9,7 @@ services:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
     volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
       - ./rabbitmq_config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
@@ -56,3 +57,7 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "2"]
+
+volumes:
+  rabbitmq_data:
+    driver: local
