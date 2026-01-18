@@ -1,5 +1,6 @@
 import pika
 import sys
+import time
 
 class Communication:
     def __init__(self, config):
@@ -12,29 +13,46 @@ class Communication:
         self.port = self.rmq_config.get('port', 5672)
         self.username = self.rmq_config.get('username', 'guest')
         self.password = self.rmq_config.get('password', 'guest')
+        self.max_retries = self.rmq_config.get('max_retries', 5)
+        self.retry_delay = self.rmq_config.get('retry_delay', 5)
         
         self.connection = None
         self.channel = None
 
     def connect(self):
         """
-        Establish connection to RabbitMQ server.
+        Establish connection to RabbitMQ server with retry mechanism.
         """
-        print(f"Connecting to RabbitMQ at {self.host}:{self.port}...")
-        try:
-            credentials = pika.PlainCredentials(self.username, self.password)
-            parameters = pika.ConnectionParameters(
-                host=self.host,
-                port=self.port,
-                credentials=credentials
-            )
-            self.connection = pika.BlockingConnection(parameters)
-            self.channel = self.connection.channel()
-            print("Successfully connected to RabbitMQ.")
-        except Exception as e:
-            print(f"Error connecting to RabbitMQ: {e}")
-            # Tùy chọn: raise e hoặc sys.exit(1) nếu kết nối là bắt buộc
-            raise e
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                print(f"Connecting to RabbitMQ at {self.host}:{self.port}...")
+                credentials = pika.PlainCredentials(self.username, self.password)
+                parameters = pika.ConnectionParameters(
+                    host=self.host,
+                    port=self.port,
+                    credentials=credentials,
+                    # Set a heartbeat interval to keep the connection alive
+                    heartbeat=600,
+                    # Set a shorter connection timeout
+                    blocked_connection_timeout=300
+                )
+                self.connection = pika.BlockingConnection(parameters)
+                self.channel = self.connection.channel()
+                print("Successfully connected to RabbitMQ.")
+                return
+            except pika.exceptions.AMQPConnectionError as e:
+                print(f"Error connecting to RabbitMQ: {e}")
+                retries += 1
+                if retries < self.max_retries:
+                    print(f"Retrying in {self.retry_delay} seconds... ({retries}/{self.max_retries})")
+                    time.sleep(self.retry_delay)
+                else:
+                    print("Max retries reached. Could not connect to RabbitMQ.")
+                    sys.exit(1)
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+                sys.exit(1)
 
     def close(self):
         """Safely close the RabbitMQ connection."""
