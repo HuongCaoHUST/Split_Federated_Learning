@@ -10,7 +10,7 @@
 # Ignore all contents of the data directory...
 data/*
 # ...but re-include the class_names file.
-!data/class_names
+!data/class_names.py
 /model/__pycache__
 /src/__pycache__
 /results/*
