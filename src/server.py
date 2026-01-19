@@ -11,3 +11,4 @@ class Server:
         self.comm.delete_old_queues(['intermediate_queue', 'edge_queue'])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('edge_queue')
+        self.comm.create_queue('server_queue')

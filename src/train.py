@@ -163,6 +163,17 @@ class TrainerEdge:
         
         return avg_val_loss, val_accuracy
     
+    def post_processing(self):
+        # Save model
+        if self.save_model_enabled:
+            save_path = os.path.join(self.run_dir, 'cifar_net_edge.pth')
+            torch.save(self.model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
+        else:
+            print("Model saving skipped as per configuration.")
+
+        print("Plots saved.")
+    
     def run(self):
         print("Starting Training...")
         self.comm.connect()
@@ -172,6 +183,7 @@ class TrainerEdge:
             print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
         
         print("Finished Training.")
+        self.post_processing()
         self.comm.close()
 
 class TrainerServer:
@@ -299,7 +311,7 @@ class TrainerServer:
     def post_processing(self):
         # Save model
         if self.save_model_enabled:
-            save_path = os.path.join(self.run_dir, self.model_save_path)
+            save_path = os.path.join(self.run_dir, 'cifar_net_server.pth')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
         else:
@@ -322,8 +334,8 @@ class TrainerServer:
             print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
         
         print("Finished Training.")
-        self.comm.close()
         self.post_processing()
+        self.comm.close()
 
 def train(config, device, num_classes, project_root, layer_id):
     if layer_id == 1:
