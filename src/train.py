@@ -51,6 +51,25 @@ class Trainer:
         # 2. Initialize model with the correct number of classes
         from ultralytics.nn.tasks import DetectionModel
         self.model = DetectionModel("yolo11n.yaml", nc=self.num_classes)
+
+        # Load pretrained weights
+        pretrained_path = './yolo11n.pt'
+        if os.path.exists(pretrained_path):
+            print(f"Loading pretrained weights from '{pretrained_path}'")
+            try:
+                # File pretrained 'yolo11n.pt' chứa một đối tượng model được pickle, không chỉ là trọng số.
+                # Kể từ PyTorch 2.6, `torch.load` mặc định là `weights_only=True` vì lý do bảo mật.
+                # Chúng ta phải đặt nó thành `False` để tải loại checkpoint này.
+                ckpt = torch.load(pretrained_path, map_location=self.device, weights_only=False)
+                # Handle different checkpoint formats (full model vs. state_dict)
+                state_dict = (ckpt.get('model') or ckpt).float().state_dict()
+                self.model.load_state_dict(state_dict, strict=False)
+                print("Pretrained weights loaded successfully for transfer learning.")
+            except Exception as e:
+                print(f"Error loading pretrained weights: {e}. Starting from scratch.")
+        else:
+            print(f"Pretrained weights not found at '{pretrained_path}'. Starting from scratch.")
+
         self.model.names = data_cfg['names']
 
         self.yolo_args = get_cfg(DEFAULT_CFG)
