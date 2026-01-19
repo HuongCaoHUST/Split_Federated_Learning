@@ -156,8 +156,6 @@ class Trainer:
 
     def run(self):
         print("Starting Training...")
-        self.comm.connect()
-        self.comm.create_queue('intermediate_queue')
 
         for epoch in range(self.num_epochs):
             avg_train_loss = self.train_one_epoch(epoch)
