@@ -58,7 +58,8 @@ class Trainer:
         )
 
         # Initialize model
-        self.model = self._init_model()
+        from ultralytics.nn.tasks import ClassificationModel
+        self.model = ClassificationModel("yolo11n-cls.yaml", nc=10)
         
         # Init Loss and Optimizer
         self.criterion = nn.CrossEntropyLoss()
@@ -103,6 +104,11 @@ class Trainer:
             labels = labels.to(self.device)
 
             outputs = self.model(images)
+            print(outputs.shape)
+            print(labels.shape)
+
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
             loss = self.criterion(outputs, labels)
 
             self.optimizer.zero_grad()
@@ -127,7 +133,11 @@ class Trainer:
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 outputs = self.model(images)
+                
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
                 loss = self.criterion(outputs, labels)
+                
                 val_loss += loss.item()
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
@@ -156,8 +166,6 @@ class Trainer:
 
     def run(self):
         print("Starting Training...")
-        self.comm.connect()
-        self.comm.create_queue('intermediate_queue')
 
         for epoch in range(self.num_epochs):
             avg_train_loss = self.train_one_epoch(epoch)
