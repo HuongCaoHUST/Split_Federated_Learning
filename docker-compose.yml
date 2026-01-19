@@ -43,13 +43,6 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "1"]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   torch_2:
     build: .
@@ -64,13 +57,6 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "2"]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
 volumes:
   rabbitmq_data:

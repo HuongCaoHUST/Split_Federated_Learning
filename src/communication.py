@@ -1,4 +1,5 @@
 import pika
+import os
 import sys
 import time
 
@@ -122,3 +123,20 @@ class Communication:
             self.channel.start_consuming()
         else:
             print("Error: Channel is not initialized. Please call connect() first.")
+
+    def publish_model(self, model_path, queue_name):
+        """
+        Đọc file model từ đường dẫn và gửi dữ liệu binary qua RabbitMQ.
+        """
+        try:
+            if not os.path.exists(model_path):
+                print(f"Error: Model file not found at {model_path}")
+                return
+
+            with open(model_path, 'rb') as f:
+                model_data = f.read()
+            
+            self.publish_message(queue_name=queue_name, message=model_data)
+            print(f"Successfully published model from {model_path} to '{queue_name}'")
+        except Exception as e:
+            print(f"An error occurred while publishing the model: {e}")

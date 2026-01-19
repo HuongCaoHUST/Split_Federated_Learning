@@ -28,7 +28,7 @@ class TrainerEdge:
         self.project_root = project_root
         
         # Set Hyperparameters
-        # self.run_dir = create_run_dir(project_root)
+        self.run_dir = create_run_dir(project_root)
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -169,6 +169,7 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, 'cifar_net_edge.pth')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
+            self.comm.publish_model(save_path, queue_name='server_queue')
         else:
             print("Model saving skipped as per configuration.")
 
@@ -314,6 +315,7 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, 'cifar_net_server.pth')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
+            self.comm.publish_model(save_path, queue_name='server_queue')
         else:
             print("Model saving skipped as per configuration.")
 
