@@ -1,14 +1,14 @@
 training:
-  num_epochs: 5
-  batch_size: 32  
+  num_epochs: 1
+  batch_size: 8
   learning_rate: 0.001
   optimizer: 'SGD' # Adam or SGD
   momentum: 0.9
 
 model:
   name: 'VGG16'
-  save_path: 'cifar_net.pth'
-  save_model: false
+  save_path: 'cifar_net.pt'
+  save_model: true
 
 dataset:
   data: 'CIFAR10' # 'CIFAR10' or 'MNIST'
