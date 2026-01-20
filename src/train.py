@@ -225,7 +225,7 @@ class Trainer:
 
                     if npr == 0:
                         if nl:
-                            stats.append((correct, torch.tensor([], device=self.device), torch.tensor([], device=self.device), target_labels[:, 0]))
+                            stats.append((correct.cpu(), torch.tensor([], device='cpu'), torch.tensor([], device='cpu'), target_labels[:, 0].cpu()))
                         continue
 
                     if nl:
@@ -288,7 +288,7 @@ class Trainer:
                 matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
             
             matches = torch.from_numpy(matches).to(self.device)
-            correct[matches[:, 1].long()] = matches[:, 2:3] >= iou_v
+            correct[matches[:, 1].long().cpu()] = (matches[:, 2:3] >= iou_v).cpu()
             
         return torch.tensor(correct, dtype=torch.bool, device=self.device)
 
