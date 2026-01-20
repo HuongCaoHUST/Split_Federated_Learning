@@ -23,6 +23,9 @@ from ultralytics.utils import DEFAULT_CFG
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
+import numpy as np
+from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
+from ultralytics.utils.metrics import ap_per_class
 
 class Trainer:
     def __init__(self, config, device, num_classes, project_root):
@@ -47,8 +50,9 @@ class Trainer:
         # Initialize RabbitMQ connection
         self.comm = Communication(config)
 
-        data_cfg = check_det_dataset("./data/livingroom_4_1.yaml")
-        self.num_classes = data_cfg['nc']
+        self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
+        print(f"Data configuration: {self.data_cfg}")
+        self.num_classes = self.data_cfg['nc']
 
         # 2. Initialize model with the correct number of classes
         self.model = DetectionModel("yolo11n.yaml", nc=self.num_classes).to(self.device)
@@ -64,7 +68,7 @@ class Trainer:
             else:
                 print("No pretrained weights specified. Starting from scratch.")
 
-        self.model.names = data_cfg['names']
+        self.model.names = self.data_cfg['names']
 
         self.yolo_args = get_cfg(DEFAULT_CFG)
         self.model.args = self.yolo_args
@@ -83,9 +87,9 @@ class Trainer:
         
         # 3. Initialize Dataset and DataLoader
         self.train_dataset = YOLODataset(
-            img_path=data_cfg["train"],
+            img_path=self.data_cfg["train"],
             imgsz=640,
-            data=data_cfg,
+            data=self.data_cfg,
             augment=True,
             hyp=self.yolo_args,
             rect=False,
@@ -98,6 +102,23 @@ class Trainer:
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=self.train_dataset.collate_fn
+        )
+
+        self.val_dataset = YOLODataset(
+            img_path=self.data_cfg["val"],
+            imgsz=640,
+            data=self.data_cfg,
+            augment=False,
+            hyp=self.yolo_args,
+            rect=False,
+            stride=32
+        )
+        self.val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.val_dataset.collate_fn
         )
 
         # History tracking
@@ -154,6 +175,122 @@ class Trainer:
 
         avg_train_loss = running_loss / len(self.train_loader)
         return avg_train_loss
+    
+    def validate_one_epoch(self, epoch):
+        self.model.eval()
+        running_loss = 0.0
+        stats = [] 
+        conf_thres = 0.001
+        iou_thres = 0.6
+        val_progress_bar = tqdm(self.val_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Val]")
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(val_progress_bar):
+                images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
+                
+                # Gom targets
+                batch_idx_tensor = batch['batch_idx'].view(-1, 1).to(self.device)
+                cls_tensor = batch['cls'].view(-1, 1).to(self.device)
+                bboxes_tensor = batch['bboxes'].to(self.device)
+                targets = torch.cat((batch_idx_tensor, cls_tensor, bboxes_tensor), 1)
+
+                # --- SỬA ĐỔI TẠI ĐÂY ---
+                # 1. Forward pass
+                preds = self.model(images) 
+                
+                # 2. Xử lý output tùy thuộc vào model trả về gì
+                if isinstance(preds, tuple):
+                    # Nếu là tuple (decoded, raw_features) -> chế độ eval chuẩn của YOLO
+                    nms_input = preds[0]   # Dùng cái đã decode cho NMS
+                    loss_input = preds[1]  # Dùng raw features cho Loss function
+                else:
+                    # Trường hợp model trả về trực tiếp (ít gặp ở eval mode mặc định)
+                    nms_input = preds
+                    loss_input = preds
+
+                # 3. Tính Loss (Dùng raw features)
+                # v8DetectionLoss cần raw features để tính toán chính xác
+                loss, loss_items = self.criterion(loss_input, batch)
+                running_loss += loss.sum().item()
+
+                # 4. Post-process NMS (Dùng decoded tensor)
+                # nms_input shape thường là [Batch, 4+nc, Anchors]
+                preds_nms = non_max_suppression(nms_input, conf_thres=conf_thres, iou_thres=iou_thres)
+
+                # 5. Matching Loop (như cũ)
+                for i, pred in enumerate(preds_nms):
+                    target_labels = targets[targets[:, 0] == i][:, 1:]
+                    nl, npr = target_labels.shape[0], pred.shape[0]
+                    correct = torch.zeros(npr, 10, dtype=torch.bool, device=self.device)
+
+                    if npr == 0:
+                        if nl:
+                            stats.append((correct, torch.tensor([], device=self.device), torch.tensor([], device=self.device), target_labels[:, 0]))
+                        continue
+
+                    if nl:
+                        target_boxes = xywh2xyxy(target_labels[:, 1:]) 
+                        scale_boxes(images[i].shape[1:], target_boxes, (640, 640))
+                        target_boxes[:, [0, 2]] *= images.shape[3]
+                        target_boxes[:, [1, 3]] *= images.shape[2]
+                        
+                        labels_pixel = torch.cat((target_labels[:, 0:1], target_boxes), 1)
+                        correct = self.process_batch(pred, labels_pixel)
+
+                    stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), target_labels[:, 0].cpu()))
+
+                val_progress_bar.set_postfix(val_loss=f'{loss.sum().item():.4f}')
+
+        # 5. Compute Metrics (Sau khi chạy hết epoch)
+        stats = [np.concatenate(x, 0) for x in zip(*stats)]  # Ghép list lại thành mảng numpy lớn
+        
+        # stats[0]: TP matrix, stats[1]: conf, stats[2]: pred_cls, stats[3]: target_cls
+        if len(stats) and stats[0].any():
+            results = ap_per_class(*stats, plot=False, save_dir=self.run_dir, names=self.model.names)
+            # results trả về: (tp, fp, p, r, f1, ap, ap_class)
+            # p, r, ap là mảng theo class. ap có shape (nc, 10)
+            
+            p, r, ap50, ap = results[2], results[3], results[5][:, 0], results[5].mean(1)
+            
+            mp = p.mean()       # Mean Precision
+            mr = r.mean()       # Mean Recall
+            map50 = ap50.mean() # mAP@0.5
+            map5095 = ap.mean() # mAP@0.5:0.95
+        else:
+            mp, mr, map50, map5095 = 0.0, 0.0, 0.0, 0.0
+
+        print(f"Validation Results: Precision: {mp:.4f}, Recall: {mr:.4f}, mAP50: {map50:.4f}, mAP50-95: {map5095:.4f}")
+        
+        avg_val_loss = running_loss / len(self.val_loader)
+        
+        # Trả về thêm metrics để lưu vào CSV
+        return avg_val_loss, map50, map5095, mp, mr
+    
+    def process_batch(self, detections, labels):
+        """
+        So khớp dự đoán với ground truth để tính True Positives (TP).
+        Trả về ma trận TP cho các ngưỡng IoU (0.5 -> 0.95).
+        """
+        # Iou thresholds: 0.5, 0.55, ..., 0.95 (10 ngưỡng)
+        iou_v = torch.linspace(0.5, 0.95, 10).to(self.device)
+        n_iou = iou_v.numel()
+        
+        correct = np.zeros((detections.shape[0], n_iou), dtype=bool)
+        iou = box_iou(labels[:, 1:], detections[:, :4])
+        x = torch.where((iou >= iou_v[0]) & (labels[:, 0:1] == detections[:, 5]))  # IoU > 0.5 và cùng class
+        
+        if x[0].shape[0]:
+            matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
+            if x[0].shape[0] > 1:
+                matches = matches[matches[:, 2].argsort()[::-1]]
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                matches = matches[matches[:, 2].argsort()[::-1]]
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+            
+            matches = torch.from_numpy(matches).to(self.device)
+            correct[matches[:, 1].long()] = matches[:, 2:3] >= iou_v
+            
+        return torch.tensor(correct, dtype=torch.bool, device=self.device)
 
     def post_processing(self, epoch):
         # Save checkpoint
@@ -189,6 +326,9 @@ class Trainer:
             avg_train_loss = self.train_one_epoch(epoch)
 
             self.history_train_loss.append(avg_train_loss)
+
+            avg_val_loss, map50, map5095, mp, mr = self.validate_one_epoch(epoch)
+
             avg_val_loss = 0.0
             val_accuracy = 0.0
             self.history_val_loss.append(avg_val_loss)

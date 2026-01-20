@@ -1,0 +1,28 @@
+path: ./livingroom_4_1
+train: ./train/images
+val: ./valid/images
+nc: 20
+
+names:
+  0: Accent Chair
+  1: Artificial Plants
+  2: Chandeliers
+  3: Curtains
+  4: End - Side Tables
+  5: Floor Lamp
+  6: Mugs - Teacups
+  7: Organizer Storage
+  8: Ottomas and Benches
+  9: Picture frame
+  10: Plants
+  11: Rug
+  12: Sofa
+  13: TV stand
+  14: Table Lamp
+  15: Vase
+  16: Wall Clock
+  17: Wall mirror
+  18: coffee table
+  19: pillows
+
+kpt_shape: [0, 0]
