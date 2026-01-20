@@ -19,6 +19,15 @@ from src.utils import update_results_csv, save_plots, count_parameters, create_r
 from src.dataset import Dataset
 from src.communication import Communication
 from src.server import Server
+from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.cfg import get_cfg
+from ultralytics.utils import DEFAULT_CFG
+from ultralytics.nn.tasks import DetectionModel
+from ultralytics.data.dataset import YOLODataset
+from ultralytics.data.utils import check_det_dataset
+import numpy as np
+from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
+from ultralytics.utils.metrics import ap_per_class
 
 class TrainerEdge:
     def __init__(self, config, device, num_classes, project_root):
@@ -42,27 +51,24 @@ class TrainerEdge:
         # Initialize RabbitMQ connection
         self.comm = Communication(config)
 
-        # Load Dataset
-        self.dataset_loader = Dataset(config, project_root)
-        self.train_dataset, self.val_dataset = self.dataset_loader.prepare_datasets()
-        
-        # Create Dataloader
-        print("Creating DataLoaders...")
-        self.train_loader = DataLoader(
-            self.train_dataset, 
-            batch_size=self.batch_size, 
-            shuffle=True, 
-            num_workers=self.num_workers
-        )
-        self.validation_loader = DataLoader(
-            self.val_dataset, 
-            batch_size=self.batch_size, 
-            shuffle=False, 
-            num_workers=self.num_workers
-        )
-
         # Initialize model
-        self.model = self._init_model()
+        self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
+        self.num_classes = self.data_cfg['nc']
+        self.model = DetectionModel("yolo11n.yaml", nc=self.num_classes).to(self.device)
+        self.model.names = self.data_cfg['names']
+        self.yolo_args = get_cfg(DEFAULT_CFG)
+        self.model.args = self.yolo_args
+
+        # Load pretrained weights
+        self.criterion = v8DetectionLoss(self.model)
+        if self.optimizer_name.lower() == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.937, weight_decay=0.0005)
+        elif self.optimizer_name.lower() == 'adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        elif self.optimizer_name.lower() == 'adamw':
+             self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=0.0005)
+        else:
+            raise ValueError(f"Optimizer {self.optimizer_name} not supported.")
         
         # Init Loss and Optimizer
         self.criterion = nn.CrossEntropyLoss()
@@ -73,48 +79,43 @@ class TrainerEdge:
         else:
             raise ValueError(f"Optimizer {self.optimizer_name} not supported. Please choose 'SGD' or 'Adam'.")
 
+        # Initialize Dataset and DataLoader
+        self.train_dataset = YOLODataset(
+            img_path=self.data_cfg["train"],
+            imgsz=640,
+            data=self.data_cfg,
+            augment=True,
+            hyp=self.yolo_args,
+            rect=False,
+            stride=32
+        )
+
+        self.train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            collate_fn=self.train_dataset.collate_fn
+        )
+
         # History tracking
         self.history_train_loss = []
         self.history_val_loss = []
         self.history_val_accuracy = []
-
-    def _init_model(self):
-        print(f"Initializing model: {self.model_name}...")
-        model_map = {
-            'AlexNet': AlexNet,
-            'AlexNet_EDGE': AlexNet_EDGE,
-            'AlexNet_SERVER': AlexNet_SERVER,
-            'AlexNet': AlexNet,
-            'MobileNet': MobileNet,
-            'VGG16': VGG16,
-            'VGG16_EDGE': VGG16_EDGE,
-            'VGG16_SERVER': VGG16_SERVER
-        }
-
-        if self.model_name not in model_map:
-            print(f"Error: Model '{self.model_name}' not recognized. Supported models: {list(model_map.keys())}")
-            sys.exit(1)
-        
-        model = model_map[self.model_name](num_classes=self.num_classes).to(self.device)
-        print(f"Model Parameters: {count_parameters(model):,}")
-        print("Model initialized.")
-        return model
 
     def train_one_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
-        for batch_idx, (images, labels) in enumerate(train_progress_bar):
-            images = images.to(self.device)
-            labels = labels.to(self.device)
-
+        for batch in train_progress_bar:
+            images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
             outputs = self.model(images)
 
             payload = {
-                'batch_idx': batch_idx,
+                'batch_idx': batch['idx'],
                 'client_output': outputs.detach().cpu().numpy(),
-                'labels': labels.cpu().numpy()
+                'labels': batch['cls'].cpu().numpy()
             }
             
             data_bytes = pickle.dumps(payload)
