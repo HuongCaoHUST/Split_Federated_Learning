@@ -188,36 +188,22 @@ class Trainer:
             for batch_idx, batch in enumerate(val_progress_bar):
                 images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
                 
-                # Gom targets
                 batch_idx_tensor = batch['batch_idx'].view(-1, 1).to(self.device)
                 cls_tensor = batch['cls'].view(-1, 1).to(self.device)
                 bboxes_tensor = batch['bboxes'].to(self.device)
                 targets = torch.cat((batch_idx_tensor, cls_tensor, bboxes_tensor), 1)
-
-                # --- SỬA ĐỔI TẠI ĐÂY ---
-                # 1. Forward pass
                 preds = self.model(images) 
                 
-                # 2. Xử lý output tùy thuộc vào model trả về gì
                 if isinstance(preds, tuple):
-                    # Nếu là tuple (decoded, raw_features) -> chế độ eval chuẩn của YOLO
-                    nms_input = preds[0]   # Dùng cái đã decode cho NMS
-                    loss_input = preds[1]  # Dùng raw features cho Loss function
+                    nms_input = pred
+                    loss_input = preds[1]
                 else:
-                    # Trường hợp model trả về trực tiếp (ít gặp ở eval mode mặc định)
                     nms_input = preds
                     loss_input = preds
-
-                # 3. Tính Loss (Dùng raw features)
-                # v8DetectionLoss cần raw features để tính toán chính xác
                 loss, loss_items = self.criterion(loss_input, batch)
                 running_loss += loss.sum().item()
 
-                # 4. Post-process NMS (Dùng decoded tensor)
-                # nms_input shape thường là [Batch, 4+nc, Anchors]
                 preds_nms = non_max_suppression(nms_input, conf_thres=conf_thres, iou_thres=iou_thres)
-
-                # 5. Matching Loop (như cũ)
                 for i, pred in enumerate(preds_nms):
                     target_labels = targets[targets[:, 0] == i][:, 1:]
                     nl, npr = target_labels.shape[0], pred.shape[0]
@@ -239,14 +225,10 @@ class Trainer:
 
                 val_progress_bar.set_postfix(val_loss=f'{loss.sum().item():.4f}')
 
-        # 5. Compute Metrics (Sau khi chạy hết epoch)
-        stats = [np.concatenate(x, 0) for x in zip(*stats)]  # Ghép list lại thành mảng numpy lớn
+        stats = [np.concatenate(x, 0) for x in zip(*stats)]
         
-        # stats[0]: TP matrix, stats[1]: conf, stats[2]: pred_cls, stats[3]: target_cls
         if len(stats) and stats[0].any():
             results = ap_per_class(*stats, plot=False, save_dir=self.run_dir, names=self.model.names)
-            # results trả về: (tp, fp, p, r, f1, ap, ap_class)
-            # p, r, ap là mảng theo class. ap có shape (nc, 10)
             
             p, r, ap50, ap = results[2], results[3], results[5][:, 0], results[5].mean(1)
             
@@ -261,15 +243,9 @@ class Trainer:
         
         avg_val_loss = running_loss / len(self.val_loader)
         
-        # Trả về thêm metrics để lưu vào CSV
         return avg_val_loss, map50, map5095, mp, mr
     
     def process_batch(self, detections, labels):
-        """
-        So khớp dự đoán với ground truth để tính True Positives (TP).
-        Trả về ma trận TP cho các ngưỡng IoU (0.5 -> 0.95).
-        """
-        # Iou thresholds: 0.5, 0.55, ..., 0.95 (10 ngưỡng)
         iou_v = torch.linspace(0.5, 0.95, 10, device=self.device)
         n_iou = iou_v.numel()
         correct = torch.zeros(detections.shape[0], n_iou, dtype=torch.bool, device=self.device)
@@ -281,7 +257,6 @@ class Trainer:
         x = torch.where((iou >= iou_v[0]) & (labels[:, 0:1] == detections[:, 5]))  # IoU > 0.5 và cùng class
         
         if x[0].shape[0]:
-            # matches: [label_idx, detection_idx, iou]
             matches = torch.cat((torch.stack(x, 1).float(), iou[x[0], x[1]][:, None]), 1)
             if x[0].shape[0] > 1:
                 # Vectorized greedy matching
