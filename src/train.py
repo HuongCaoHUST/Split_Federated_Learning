@@ -21,6 +21,7 @@ from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 
 class Trainer:
@@ -86,7 +87,6 @@ class Trainer:
             raise ValueError(f"Optimizer {self.optimizer_name} not supported.")
         
         # 3. Initialize Dataset and DataLoader
-        from ultralytics.data.dataset import YOLODataset
         self.train_dataset = YOLODataset(
             img_path=data_cfg["train"],
             imgsz=640,
@@ -164,44 +164,25 @@ class Trainer:
         # Save checkpoint
         if self.save_model_enabled:
             save_path = os.path.join(self.run_dir, self.model_save_path)
-            
-            # 1. Chuẩn bị model để lưu
-            # Deepcopy để không ảnh hưởng model đang train trên GPU
             model_to_save = deepcopy(self.model).cpu()
-            
-            # --- QUAN TRỌNG: Gắn Metadata vào Model ---
-            # Ultralytics cần 'args' và 'names' gắn trực tiếp vào object model 
-            # để khi load lại (hoặc xem trên Netron) nó hiểu cấu trúc mạng.
-            
-            # Gán config (hyperparameters) vào model. 
-            # Lưu ý: self.config nên là dict hoặc namespace chứa các tham số như 'model', 'data', etc.
             if hasattr(self, 'config'):
                 model_to_save.args = self.config 
-            
-            # Gán tên class (nếu có trong dataset hoặc config)
-            # Ví dụ: {0: 'person', 1: 'bicycle'}
             if hasattr(self.model, 'names'):
                 model_to_save.names = self.model.names
-            elif hasattr(self, 'classes'): # Trường hợp bạn lưu biến riêng
+            elif hasattr(self, 'classes'):
                 model_to_save.names = self.classes
 
-            # 2. Tạo dictionary checkpoint chuẩn Ultralytics
             checkpoint = {
                 'epoch': epoch,
-                'best_fitness': None, # Ultralytics thường check key này
-                'model': model_to_save, # Model object đã gắn args/names
-                'optimizer': self.optimizer.state_dict(), # Key chuẩn thường là 'optimizer' thay vì 'optimizer_state_dict'
+                'best_fitness': None,
+                'model': model_to_save,
+                'optimizer': self.optimizer.state_dict(),
                 'train_loss_history': getattr(self, 'history_train_loss', []),
                 'date': datetime.now().isoformat(),
             }
-            
-            # 3. Lưu file
+
             torch.save(checkpoint, save_path)
-            print(f"Checkpoint saved to {save_path}")
-            
-            # (Tùy chọn) Nếu muốn file nhẹ hơn cho Inference, có thể dùng:
-            # torch.save(checkpoint['model'], save_path_stripped) 
-            
+            print(f"Checkpoint saved to {save_path}")            
         else:
             print("Checkpoint saving skipped as per configuration.")
 
