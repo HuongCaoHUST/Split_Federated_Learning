@@ -51,7 +51,6 @@ class Trainer:
         self.comm = Communication(config)
 
         self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
-        print(f"Data configuration: {self.data_cfg}")
         self.num_classes = self.data_cfg['nc']
 
         # 2. Initialize model with the correct number of classes
