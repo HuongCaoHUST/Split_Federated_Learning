@@ -192,9 +192,19 @@ class Trainer:
         for epoch in range(self.num_epochs):
             final_epoch = epoch
             avg_train_loss = self.train_one_epoch(epoch)
-            print("avg_train_loss:", avg_train_loss)
-        
+
+            self.history_train_loss.append(avg_train_loss)
+            avg_val_loss = 0.0
+            val_accuracy = 0.0
+            self.history_val_loss.append(avg_val_loss)
+            self.history_val_accuracy.append(val_accuracy)
+
+            print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {avg_train_loss:.4f}")
+            update_results_csv(epoch + 1, avg_train_loss, avg_val_loss, val_accuracy, self.run_dir)
+
         print("Finished Training.")
+        save_plots(self.history_train_loss, self.history_val_loss, self.history_val_accuracy, self.run_dir)
+
         self.comm.close()
         self.post_processing(final_epoch)
 
