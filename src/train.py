@@ -125,12 +125,19 @@ class TrainerEdge:
             server_grad_numpy = response['gradient']
             batch_loss = response['loss']
 
-            grad_tensor = torch.from_numpy(server_grad_numpy).to(self.device)
             self.optimizer.zero_grad()
-            outputs.backward(grad_tensor)
+
+            grad_tensors = []
+            for g in server_grad_numpy:
+                if isinstance(g, torch.Tensor):
+                    grad_tensors.append(g.to(self.device))
+                else:
+                    grad_tensors.append(torch.from_numpy(g).to(self.device))
+
+            outputs.backward(grad_tensors)
             self.optimizer.step()
-            running_loss += batch_loss
-            train_progress_bar.set_postfix({'server_loss': batch_loss})
+            # running_loss += batch_loss
+            # train_progress_bar.set_postfix({'server_loss': batch_loss})
 
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
