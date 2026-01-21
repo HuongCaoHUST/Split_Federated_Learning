@@ -2,21 +2,7 @@ import torch
 import torchvision
 import numpy as np
 import time
-
-def xywh2xyxy(x):
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
-    y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
-    y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
-    y[..., 3] = x[..., 1] + x[..., 3] / 2  # bottom right y
-    return y
-
-def box_iou(box1, box2, eps=1e-7):
-    (a1, a2), (b1, b2) = box1.unsqueeze(1).chunk(2, 2), box2.unsqueeze(0).chunk(2, 2)
-    inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp(0).prod(2)
-    area1 = (a2 - a1).prod(2)
-    area2 = (b2 - b1).prod(2)
-    return inter / (area1 + area2 - inter + eps)
+from ultralytics.utils.ops import xywh2xyxy
 
 def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None):
     """Scale box từ kích thước ảnh input về ảnh gốc."""

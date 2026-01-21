@@ -25,8 +25,9 @@ from ultralytics.nn.tasks import DetectionModel
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 import numpy as np
-from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
-from ultralytics.utils.metrics import ap_per_class
+from src.utils_box import non_max_suppression
+from ultralytics.utils.metrics import ap_per_class, box_iou
+from ultralytics.utils.ops import xywh2xyxy
 
 class Trainer:
     def __init__(self, config, device, num_classes, project_root):
