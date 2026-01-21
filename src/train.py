@@ -14,6 +14,7 @@ from model.Mobilenet import MobileNet
 from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
+from model.YOLO11 import YOLO11_Full
 from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir
 from src.dataset import Dataset
 from src.communication import Communication
@@ -54,18 +55,7 @@ class Trainer:
         self.num_classes = self.data_cfg['nc']
 
         # 2. Initialize model with the correct number of classes
-        self.model = DetectionModel("yolo11n.yaml", nc=self.num_classes).to(self.device)
-
-        # Load pretrained weights
-        if self.pretrained_path and os.path.exists(self.pretrained_path):
-            print(f"Loading pretrained weights from '{self.pretrained_path}'")
-            checkpoint = torch.load(self.pretrained_path, map_location='cpu', weights_only=False)
-            self.model.load(checkpoint)
-        else:
-            if self.pretrained_path:
-                print(f"Pretrained weights not found at '{self.pretrained_path}'. Starting from scratch.")
-            else:
-                print("No pretrained weights specified. Starting from scratch.")
+        self.model = YOLO11_Full(pretrained='yolo11n.pt').to(self.device)
 
         self.model.names = self.data_cfg['names']
 
@@ -194,7 +184,7 @@ class Trainer:
                 preds = self.model(images) 
                 
                 if isinstance(preds, tuple):
-                    nms_input = pred
+                    nms_input = preds[0]
                     loss_input = preds[1]
                 else:
                     nms_input = preds
