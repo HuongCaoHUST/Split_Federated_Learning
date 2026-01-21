@@ -170,7 +170,7 @@ class Trainer:
         running_loss = 0.0
         stats = [] 
         conf_thres = 0.001
-        iou_thres = 0.6
+        iou_thres = 0.7
         val_progress_bar = tqdm(self.val_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Val]")
         
         with torch.no_grad():
