@@ -101,6 +101,14 @@ class TrainerEdge:
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for batch in train_progress_bar:
+            print(f"\n[DEBUG] Các keys có trong batch: {list(batch.keys())}")
+            # In thử shape của từng key để dễ hình dung
+            for k, v in batch.items():
+                if hasattr(v, 'shape'):
+                    print(f"   - {k}: shape {v.shape}")
+                else:
+                    print(f"   - {k}: {type(v)}")
+
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
             outputs = self.model(images)
             print("Outputs shapes: ", [o.shape for o in outputs])
@@ -241,14 +249,17 @@ class TrainerServer:
             body = self.comm.consume_message_sync('intermediate_queue')
             payload = pickle.loads(body)
             client_data_numpy = payload['client_output']
-            labels_numpy = payload['labels']
+            labels_numpy = payload['batch_data']
 
-            client_tensor = torch.tensor(
-                client_data_numpy, 
-                dtype=torch.float32, 
-                device=self.device,
-                requires_grad=True
-            )
+            client_tensors = []
+            for client_np in client_data_numpy:
+                t = torch.tensor(
+                    client_np, 
+                    dtype=torch.float32, 
+                    device=self.device,
+                    requires_grad=True
+                )
+                client_tensors.append(t)
             labels = torch.from_numpy(labels_numpy).to(self.device)
 
             self.optimizer.zero_grad()
