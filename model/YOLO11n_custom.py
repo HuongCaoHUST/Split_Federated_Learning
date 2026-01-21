@@ -74,7 +74,6 @@ class YOLO11_SERVER(nn.Module):
         self.layers.append(Conv(128, 128, k=3, s=2))
         self.layers.append(Concat(dimension=1))
         self.layers.append(C3k2(384, 256, n=1, c3k=True))
-
         self.layers.append(Detect(nc=nc, ch=[64, 128, 256]))
 
         self.model = self.layers
@@ -113,7 +112,7 @@ class YOLO11_SERVER(nn.Module):
         x = self.layers[11](x)           # C3k2
         head_p5 = x                      # Output cho Head P5
 
-        return self.head([head_p3, head_p4, head_p5])
+        return self.layers[12]([head_p3, head_p4, head_p5])
     
     def load_pretrained_weights(self, pt_path):
         print(f"Loading weights from {pt_path}...")

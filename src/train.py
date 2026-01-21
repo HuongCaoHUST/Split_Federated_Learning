@@ -101,29 +101,19 @@ class TrainerEdge:
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for batch in train_progress_bar:
-            print(f"\n[DEBUG] Các keys có trong batch: {list(batch.keys())}")
-            # In thử shape của từng key để dễ hình dung
-            for k, v in batch.items():
-                if hasattr(v, 'shape'):
-                    print(f"   - {k}: shape {v.shape}")
-                else:
-                    print(f"   - {k}: {type(v)}")
-
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
             outputs = self.model(images)
             print("Outputs shapes: ", [o.shape for o in outputs])
  
-            serializable_batch = {}
-            for key, value in batch.items():
-                if key == 'img':
-                    continue
-                if isinstance(value, torch.Tensor):
-                    serializable_batch[key] = value.cpu().numpy()
-                else:
-                    serializable_batch[key] = value
+            label_data = {
+                "batch_idx": batch["batch_idx"].cpu(),
+                "bboxes":    batch["bboxes"].cpu(),
+                "cls":       batch["cls"].cpu()
+            }
+
             payload = {
                 'client_output': [x.detach().cpu().numpy() for x in outputs],
-                'batch_data': serializable_batch
+                'label_data': label_data
             }
 
             data_bytes = pickle.dumps(payload)
@@ -223,6 +213,10 @@ class TrainerServer:
 
         # Initialize model
         self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt').to(self.device)
+        self.data_cfg = check_det_dataset("coco8.yaml")
+        self.model.names = self.data_cfg['names']
+        self.yolo_args = get_cfg(DEFAULT_CFG)
+        self.model.args = self.yolo_args
         
         # Init Loss and Optimizer
         self.criterion = v8DetectionLoss(self.model)
@@ -249,7 +243,7 @@ class TrainerServer:
             body = self.comm.consume_message_sync('intermediate_queue')
             payload = pickle.loads(body)
             client_data_numpy = payload['client_output']
-            labels_numpy = payload['batch_data']
+            label_data = payload['label_data']
 
             client_tensors = []
             for client_np in client_data_numpy:
@@ -260,22 +254,30 @@ class TrainerServer:
                     requires_grad=True
                 )
                 client_tensors.append(t)
-            labels = torch.from_numpy(labels_numpy).to(self.device)
 
+            outputs = self.model(client_tensors)
+            loss, loss_items = self.criterion(outputs, label_data)
             self.optimizer.zero_grad()
-            outputs = self.model(client_tensor)
-            loss = self.criterion(outputs, labels)
-            loss.backward()
+
+            total_loss = loss.sum()
+            total_loss.backward()
             self.optimizer.step()
 
-            grad_to_send = client_tensor.grad.cpu().numpy()
+            grads_to_send = [t.grad.cpu() for t in client_tensors]
             response = {
-                'gradient': grad_to_send,
-                'loss': loss.item()
+                'gradient': grads_to_send,
+                'loss': loss_items
             }
             self.comm.publish_message('edge_queue', pickle.dumps(response))
 
-            running_loss += loss.item()
+            train_progress_bar.set_postfix(
+                total_loss=f'{total_loss.item():.4f}',
+                box_loss=f'{loss_items[0].item():.4f}',
+                cls_loss=f'{loss_items[1].item():.4f}',
+                dfl_loss=f'{loss_items[2].item():.4f}'
+            )
+
+            running_loss += total_loss.item()
         return running_loss / len(train_progress_bar)
 
     def validate_one_epoch(self, epoch):
