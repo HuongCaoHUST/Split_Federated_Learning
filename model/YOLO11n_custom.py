@@ -12,7 +12,7 @@ from ultralytics.nn.modules import (
 )
 
 class YOLO11_EDGE(nn.Module):
-    def __init__(self, pretrained):
+    def __init__(self, pretrained = None):
         super().__init__()
         self.layers = nn.ModuleList()
         self.layers.append(Conv(c1=3, c2=16, k=3, s=2))

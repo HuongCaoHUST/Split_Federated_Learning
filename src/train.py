@@ -15,6 +15,7 @@ from model.Mobilenet import MobileNet
 from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
+from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER
 from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir
 from src.dataset import Dataset
 from src.communication import Communication
@@ -22,7 +23,6 @@ from src.server import Server
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
-from model.YOLO11n_custom import YOLO11Custom
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 import numpy as np
@@ -55,21 +55,22 @@ class TrainerEdge:
         # Initialize model
         self.data_cfg = check_det_dataset("coco8.yaml")
         self.num_classes = self.data_cfg['nc']
-        self.model = YOLO11Custom().to(self.device)
+        self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
+
         self.model.names = self.data_cfg['names']
         self.yolo_args = get_cfg(DEFAULT_CFG)
         self.model.args = self.yolo_args
 
-        # Load pretrained weights
-        if self.pretrained_path and os.path.exists(self.pretrained_path):
-            print(f"Loading pretrained weights from '{self.pretrained_path}'")
-            checkpoint = torch.load(self.pretrained_path, map_location='cpu', weights_only=False)
-            self.model.load(checkpoint)
-        else:
-            if self.pretrained_path:
-                print(f"Pretrained weights not found at '{self.pretrained_path}'. Starting from scratch.")
-            else:
-                print("No pretrained weights specified. Starting from scratch.")
+        # # Load pretrained weights
+        # if self.pretrained_path and os.path.exists(self.pretrained_path):
+        #     print(f"Loading pretrained weights from '{self.pretrained_path}'")
+        #     checkpoint = torch.load(self.pretrained_path, map_location='cpu', weights_only=False)
+        #     self.model.load(checkpoint)
+        # else:
+        #     if self.pretrained_path:
+        #         print(f"Pretrained weights not found at '{self.pretrained_path}'. Starting from scratch.")
+        #     else:
+        #         print("No pretrained weights specified. Starting from scratch.")
 
         # Init Optimizer
         if self.optimizer_name.lower() == 'sgd':
@@ -127,8 +128,6 @@ class TrainerEdge:
                 'client_output': [x.detach().cpu().numpy() for x in outputs],
                 'batch_data': serializable_batch
             }
-
-            print("Payload: ", payload)
             
             data_bytes = pickle.dumps(payload)
             self.comm.publish_message(queue_name='intermediate_queue', message=data_bytes)
