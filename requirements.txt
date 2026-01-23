@@ -1,7 +1,4 @@
-torch
-torchvision
-pyyaml
-numpy
-matplotlib
+ultralytics
+mlflow
 tqdm
 pika
