@@ -138,7 +138,7 @@ class TrainerEdge:
             self.optimizer.step()
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
-        clear_memory(threshold=0.85)
+        clear_memory(device = self.device, threshold=0.85)
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
         return avg_train_loss

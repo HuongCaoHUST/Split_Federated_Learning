@@ -177,7 +177,7 @@ def get_memory(unit='fraction'):
             return mem.used / (1024**3)
         return mem.used
 
-def clear_memory(self, threshold: float = 0.85):
+def clear_memory(device, threshold: float = 0.85):
         if threshold:
             assert 0 <= threshold <= 1, "Threshold must be between 0 and 1."
             if get_memory(unit='fraction') <= threshold:
@@ -185,7 +185,7 @@ def clear_memory(self, threshold: float = 0.85):
 
         gc.collect()
         
-        if self.device.type == "mps":
+        if device.type == "mps":
             torch.mps.empty_cache()
-        elif self.device.type == "cuda":
+        elif device.type == "cuda":
             torch.cuda.empty_cache()
