@@ -126,16 +126,8 @@ def load_config_and_setup(config_path, project_root):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
-    dataset_name = config.get('dataset', {}).get('name', 'CIFAR10')
-    if dataset_name.upper() == 'MNIST':
-        class_names = [str(i) for i in range(10)]
-    else:
-        class_names_file_path = os.path.join(project_root, 'data', 'class_names.py')
-        class_names = _load_class_names_from_file(class_names_file_path)
-    
-    num_classes = len(class_names)
+    return config, device
 
-    return config, device, num_classes
 def get_memory(unit='fraction'):
         """
         unit: fraction, gb, bytes

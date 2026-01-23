@@ -2,6 +2,7 @@ import os
 import argparse
 from src.train import train
 from src.utils import load_config_and_setup
+import uuid
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a CNN model.')
@@ -9,5 +10,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
-    config, device, num_classes = load_config_and_setup("./config.yaml", project_root)
-    train(config, device, num_classes, project_root, args.layer_id)
+    config, device = load_config_and_setup("./config.yaml", project_root)
+    client_id = uuid.uuid4().hex[:8]
+    train(config, device, project_root, args.layer_id, client_id)

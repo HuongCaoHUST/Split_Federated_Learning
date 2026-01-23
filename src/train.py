@@ -34,14 +34,13 @@ MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
 
 class TrainerEdge:
-    def __init__(self, config, device, num_classes, project_root):
+    def __init__(self, config, device, project_root, layer_id, client_id):
         self.config = config
         self.device = device
-        self.num_classes = num_classes
         self.project_root = project_root
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root, layer_id = 1)
+        self.run_dir = create_run_dir(project_root, layer_id)
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -55,6 +54,12 @@ class TrainerEdge:
 
         # Initialize RabbitMQ connection
         self.comm = Communication(config)
+        self.comm.connect()
+
+        # Send register message
+        self.layer_id = layer_id
+        self.client_id = client_id
+        self.comm.send_register_message(layer_id, client_id)
 
         # Initialize model
         self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
@@ -187,7 +192,6 @@ class TrainerEdge:
     
     def run(self):
         print("Starting Training...")
-        self.comm.connect()
 
         nb_train = len(self.train_loader)
         self.comm.send_training_metadata('server_queue', nb_train)
@@ -207,14 +211,13 @@ class TrainerEdge:
         self.comm.close()
 
 class TrainerServer:
-    def __init__(self, config, device, num_classes, project_root):
+    def __init__(self, config, device, project_root, layer_id, client_id):
         self.config = config
         self.device = device
-        self.num_classes = num_classes
         self.project_root = project_root
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root, layer_id = 2)
+        self.run_dir = create_run_dir(project_root, layer_id)
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -227,6 +230,12 @@ class TrainerServer:
 
         # Initialize RabbitMQ connection
         self.comm = Communication(config)
+        self.comm.connect()
+
+        # Send register message
+        self.layer_id = layer_id
+        self.client_id = client_id
+        self.comm.send_register_message(layer_id, client_id)
 
         # Initialize model
         self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt').to(self.device)
@@ -355,7 +364,6 @@ class TrainerServer:
 
     def run(self):
         print("Starting Training...")
-        self.comm.connect()
 
         for epoch in range(self.num_epochs):
             avg_train_loss = self.train_one_epoch(epoch)
@@ -365,7 +373,7 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(save_path, queue_name='server_queue', layer_id=2)
+            self.comm.publish_model(save_path, queue_name='server_queue', layer_id = self.layer_id)
             
             # Log to CSV
             update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)
@@ -376,14 +384,14 @@ class TrainerServer:
         self.post_processing()
         self.comm.close()
 
-def train(config, device, num_classes, project_root, layer_id):
+def train(config, device, project_root, layer_id, client_id):
     if layer_id == 1:
         time.sleep(5)
-        trainer = TrainerEdge(config, device, num_classes, project_root)
+        trainer = TrainerEdge(config, device, project_root, layer_id, client_id)
         trainer.run()
     elif layer_id == 2:
         time.sleep(5)
-        trainer = TrainerServer(config, device, num_classes, project_root)
+        trainer = TrainerServer(config, device, project_root, layer_id, client_id)
         trainer.run()
     elif layer_id == 0:
         server = Server(config)

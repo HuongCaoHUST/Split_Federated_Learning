@@ -1,3 +1,7 @@
+clients:
+  - 1
+  - 1
+
 training:
   num_epochs: 2
   batch_size: 32  
@@ -14,9 +18,7 @@ model:
   pretrained_path: './yolo11n.pt'
 
 dataset:
-  data: 'CIFAR10' # 'CIFAR10' or 'MNIST'
-  validation_split: 0.1
-  subset_fraction: 0.001
+  - ./datasets/livingroom_4_2.yaml
 
 rabbitmq:
   host: 'rabbitmq'

@@ -125,6 +125,17 @@ class Communication:
         else:
             print("Error: Channel is not initialized. Please call connect() first.")
 
+    def send_register_message(self, layer_id = None, client_id = None):
+        """
+        Sends register message to centralized server.
+        """
+        payload = {
+            'action': 'register',
+            'layer_id': layer_id,
+            'client_id': client_id,
+        }
+        self.publish_message('server_queue', pickle.dumps(payload))
+
     def send_training_metadata(self, queue_name, nb_train = None, nb_val = None):
         """
         Sends training metadata (number of training and validation batches) to a queue.
@@ -147,6 +158,7 @@ class Communication:
                 model_data = f.read()
 
                 payload = {
+                    'action': 'update_model',
                     'model_data': model_data,
                     'layer_id': layer_id
                 }
