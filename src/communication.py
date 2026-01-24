@@ -136,7 +136,7 @@ class Communication:
         }
         self.publish_message('server_queue', pickle.dumps(payload))
 
-    def send_start_message(self, client_ids = None):
+    def send_start_message(self, client_ids = None, nb = None):
         """
         Sends register message to centralized server.
         """
@@ -144,6 +144,9 @@ class Communication:
             payload = {
                 'action': 'start'
             }
+            if nb is not None:
+                payload['nb'] = nb
+                
             self.publish_message(f'client_queue_{id}', pickle.dumps(payload))
 
     def send_training_metadata(self, queue_name, client_id, nb_train = None, nb_val = None):
@@ -158,7 +161,7 @@ class Communication:
         }
         self.publish_message(queue_name, pickle.dumps(payload))
 
-    def publish_model(self, model_path, queue_name, layer_id = None):
+    def publish_model(self, queue_name, model_path, layer_id = None, epoch = None):
 
         try:
             if not os.path.exists(model_path):
@@ -171,7 +174,8 @@ class Communication:
                 payload = {
                     'action': 'update_model',
                     'model_data': model_data,
-                    'layer_id': layer_id
+                    'layer_id': layer_id,
+                    'epoch': epoch
                 }
             
             self.publish_message(queue_name, pickle.dumps(payload))

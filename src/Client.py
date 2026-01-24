@@ -24,6 +24,7 @@ class Client:
         try:
             payload = pickle.loads(body)
             action = payload.get('action')
+            self.nb = payload.get('nb')
 
             print(f"Received action: {action}")
 
@@ -37,15 +38,15 @@ class Client:
         except Exception as e:
             print(f"Error processing message: {e}")
 
-    def run(self):
+    def run(self, nb = None):
         print("Client class initialized.")
         if self.layer_id == 1:
             time.sleep(5)
-            trainer = TrainerEdge(self.config, self.device, self.project_root, self.layer_id, self.client_id)
+            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id)
             trainer.run()
         elif self.layer_id == 2:
             time.sleep(5)
-            trainer = TrainerServer(self.config, self.device, self.project_root, self.layer_id, self.client_id)
+            trainer = TrainerServer(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.nb)
             trainer.run()
         else:
             print(f"Error layer id: {self.layer_id}")

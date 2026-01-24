@@ -34,10 +34,13 @@ MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
 
 class TrainerEdge:
-    def __init__(self, config, device, project_root, layer_id, client_id):
+    def __init__(self, config, device, project_root, comm, layer_id, client_id):
         self.config = config
         self.device = device
         self.project_root = project_root
+        self.comm = comm
+        self.layer_id = layer_id
+        self.client_id = client_id
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id)
@@ -51,14 +54,6 @@ class TrainerEdge:
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
         self.pretrained_path = config['model'].get('pretrained_path')
-
-        # Initialize RabbitMQ connection
-        self.comm = Communication(config)
-        self.comm.connect()
-
-        # Send register message
-        self.layer_id = layer_id
-        self.client_id = client_id
 
         # Initialize model
         self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
@@ -183,7 +178,7 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, 'cifar_net_edge.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(save_path, queue_name='server_queue')
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
         else:
             print("Model saving skipped as per configuration.")
 
@@ -203,17 +198,21 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(save_path, queue_name='server_queue', layer_id=1)
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = epoch)
         
         print("Finished Training.")
         self.post_processing()
         self.comm.close()
 
 class TrainerServer:
-    def __init__(self, config, device, project_root, layer_id, client_id):
+    def __init__(self, config, device, project_root, comm, layer_id, client_id, nb):
         self.config = config
         self.device = device
         self.project_root = project_root
+        self.comm = comm
+        self.layer_id = layer_id
+        self.client_id = client_id
+        self.nb = nb
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id)
@@ -226,14 +225,6 @@ class TrainerServer:
         self.model_name = config['model']['server']
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
-
-        # Initialize RabbitMQ connection
-        self.comm = Communication(config)
-        self.comm.connect()
-
-        # Send register message
-        self.layer_id = layer_id
-        self.client_id = client_id
 
         # Initialize model
         self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt').to(self.device)
@@ -277,7 +268,7 @@ class TrainerServer:
     def train_one_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
-        train_progress_bar = tqdm(range(4), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        train_progress_bar = tqdm(range(self.nb), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for i in train_progress_bar:
             body = self.comm.consume_message_sync('intermediate_queue')
@@ -352,7 +343,7 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, 'cifar_net_server.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(save_path, queue_name='server_queue')
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
         else:
             print("Model saving skipped as per configuration.")
 
@@ -371,7 +362,7 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(save_path, queue_name='server_queue', layer_id = self.layer_id)
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = epoch)
             
             # Log to CSV
             update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)

@@ -2,7 +2,7 @@ import os
 import argparse
 from src.utils import load_config_and_setup
 from src.server import Server
-from src.Client import Client
+from src.client import Client
 import uuid
 
 if __name__ == '__main__':
