@@ -1,4 +1,5 @@
 from src.communication import Communication
+from ultralytics.data.utils import check_det_dataset
 from src.utils import create_run_dir
 import pickle
 
@@ -49,14 +50,16 @@ class Server:
                 self.nb_count += 1
 
                 if self.nb_count == self.num_client[0]:
+                    self.data_cfg = check_det_dataset(self.datasets[0])
+                    self.num_classes = self.data_cfg['nc']
+                    self.class_names = self.data_cfg['names']
                     nb = self.get_total_nb_by_layer(layer_id = 1)
-                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), nb = nb)
+                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), nb = nb, nc = self.num_classes, class_names = self.class_names)
 
             elif action == 'update_model':
                 model_data = payload.get('model_data')
                 layer_id = payload.get('layer_id')
                 epoch = payload.get('epoch')
-                print(f"Updating model for Layer ID: {layer_id}")
                 save_path = f"{self.run_dir}/client_layer_{layer_id}_epoch_{epoch+1}.pt"
 
                 with open(save_path, "wb") as f:

@@ -205,7 +205,7 @@ class TrainerEdge:
         self.comm.close()
 
 class TrainerServer:
-    def __init__(self, config, device, project_root, comm, layer_id, client_id, nb):
+    def __init__(self, config, device, project_root, comm, layer_id, client_id, nb, nc, class_names):
         self.config = config
         self.device = device
         self.project_root = project_root
@@ -213,6 +213,9 @@ class TrainerServer:
         self.layer_id = layer_id
         self.client_id = client_id
         self.nb = nb
+        self.nc = nc
+        self.class_names = class_names
+        print("Num class: ", self.nc)
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id)
@@ -227,9 +230,8 @@ class TrainerServer:
         self.save_model_enabled = config['model'].get('save_model', True)
 
         # Initialize model
-        self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt').to(self.device)
-        self.data_cfg = check_det_dataset("coco8.yaml")
-        self.model.names = self.data_cfg['names']
+        self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+        self.model.names = self.class_names
         self.yolo_args = get_cfg(DEFAULT_CFG)
         self.model.args = self.yolo_args
         
