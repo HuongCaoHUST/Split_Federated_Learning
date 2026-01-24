@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from ultralytics.nn.modules import Conv, C3k2, SPPF, C2PSA, Concat, Detect # Import các module cần thiết
 from model.YOLO11n_custom import YOLO11_Full
 
 # --- 2. HÀM GỘP THÔNG MINH (Dựa trên logic load_pretrained_weights của bạn) ---

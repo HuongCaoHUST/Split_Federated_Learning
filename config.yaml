@@ -18,7 +18,7 @@ model:
   pretrained_path: './yolo11n.pt'
 
 dataset:
-  - ./datasets/livingroom_2.yaml
+  - coco8.yaml
 
 rabbitmq:
   host: 'rabbitmq'

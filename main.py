@@ -18,6 +18,6 @@ if __name__ == '__main__':
     elif args.layer_id == 2:
         Client(config, device, project_root, args.layer_id, client_id)
     elif args.layer_id == 0:
-        server = Server(config)
+        server = Server(config, device)
         server.run()
         

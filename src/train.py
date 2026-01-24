@@ -179,7 +179,7 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, 'cifar_net_edge.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
+            # self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
         else:
             print("Model saving skipped as per configuration.")
 
@@ -345,7 +345,7 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, 'cifar_net_server.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
+            # self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
         else:
             print("Model saving skipped as per configuration.")
 
