@@ -41,7 +41,7 @@ class Server:
                     self.registed[1] += 1
 
                 if self.registed == self.num_client:
-                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 1))
+                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 1), datasets = self.datasets)
 
             elif action == 'send_number_batch':
                 nb = payload.get('nb_train')

@@ -24,6 +24,7 @@ class Client:
         try:
             payload = pickle.loads(body)
             action = payload.get('action')
+            self.datasets = payload.get('datasets')
             self.nb = payload.get('nb')
             self.nc = payload.get('nc')
             self.class_names = payload.get('class_names')
@@ -44,7 +45,7 @@ class Client:
         print("Client class initialized.")
         if self.layer_id == 1:
             time.sleep(5)
-            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id)
+            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.datasets)
             trainer.run()
         elif self.layer_id == 2:
             time.sleep(5)

@@ -136,7 +136,7 @@ class Communication:
         }
         self.publish_message('server_queue', pickle.dumps(payload))
 
-    def send_start_message(self, client_ids = None, nb = None, nc = None, class_names = None):
+    def send_start_message(self, client_ids = None, datasets = None, nb = None, nc = None, class_names = None):
         """
         Sends register message to centralized server.
         """
@@ -144,6 +144,7 @@ class Communication:
             payload = {
                 'action': 'start'
             }
+            if datasets is not None: payload['datasets'] = datasets
             if nb and nc is not None:
                 payload['nb'] = nb
                 payload['nc'] = nc

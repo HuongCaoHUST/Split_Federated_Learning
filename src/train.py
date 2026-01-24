@@ -34,13 +34,14 @@ MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
 
 class TrainerEdge:
-    def __init__(self, config, device, project_root, comm, layer_id, client_id):
+    def __init__(self, config, device, project_root, comm, layer_id, client_id, datasets):
         self.config = config
         self.device = device
         self.project_root = project_root
         self.comm = comm
         self.layer_id = layer_id
         self.client_id = client_id
+        self.datasets = datasets
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id)
@@ -56,7 +57,7 @@ class TrainerEdge:
         self.pretrained_path = config['model'].get('pretrained_path')
 
         # Initialize model
-        self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
+        self.data_cfg = check_det_dataset(self.datasets[0])
         self.num_classes = self.data_cfg['nc']
         self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
 
@@ -215,7 +216,6 @@ class TrainerServer:
         self.nb = nb
         self.nc = nc
         self.class_names = class_names
-        print("Num class: ", self.nc)
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id)
