@@ -56,6 +56,10 @@ class TrainerEdge:
         self.save_model_enabled = config['model'].get('save_model', True)
         self.pretrained_path = config['model'].get('pretrained_path')
 
+        # Create gradient queue
+        self.gradient_queue_name = f'gradient_queue_{client_id}'
+        self.comm.create_queue(self.gradient_queue_name)
+
         # Initialize model
         self.data_cfg = check_det_dataset(self.datasets[0])
         self.num_classes = self.data_cfg['nc']
@@ -117,13 +121,14 @@ class TrainerEdge:
 
             payload = {
                 'client_output': [x.detach().cpu().numpy() for x in outputs],
-                'label_data': label_data
+                'label_data': label_data,
+                'reply_to': self.gradient_queue_name
             }
 
             data_bytes = pickle.dumps(payload)
             self.comm.publish_message(queue_name='intermediate_queue', message=data_bytes)
 
-            response_body = self.comm.consume_message_sync('gradient_queue')
+            response_body = self.comm.consume_message_sync(self.gradient_queue_name)
             response = pickle.loads(response_body)
 
             server_grad_numpy = response['gradient']
@@ -277,6 +282,7 @@ class TrainerServer:
             payload = pickle.loads(body)
             client_data_numpy = payload['client_output']
             label_data = payload['label_data']
+            gradient_queue = payload['reply_to']
 
             client_tensors = []
             for client_np in client_data_numpy:
@@ -301,7 +307,7 @@ class TrainerServer:
                 'gradient': grads_to_send,
                 'loss': loss_items
             }
-            self.comm.publish_message('gradient_queue', pickle.dumps(response))
+            self.comm.publish_message(gradient_queue, pickle.dumps(response))
 
             train_progress_bar.set_postfix(
                 total_loss=f'{total_loss.item():.4f}',

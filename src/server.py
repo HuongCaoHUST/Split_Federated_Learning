@@ -39,7 +39,6 @@ class Server:
         self.comm.connect()
         self.comm.delete_old_queues(['intermediate_queue', 'gradient_queue'])
         self.comm.create_queue('intermediate_queue')
-        self.comm.create_queue('gradient_queue')
         self.comm.create_queue('server_queue')
         self.comm.consume_messages('server_queue', self.on_message)
 
