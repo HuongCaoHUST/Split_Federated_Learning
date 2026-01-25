@@ -1,4 +1,5 @@
 ultralytics
+mlflow
 tqdm
 pandas
 pika
