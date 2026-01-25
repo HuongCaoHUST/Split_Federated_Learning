@@ -123,7 +123,7 @@ class TrainerEdge:
             data_bytes = pickle.dumps(payload)
             self.comm.publish_message(queue_name='intermediate_queue', message=data_bytes)
 
-            response_body = self.comm.consume_message_sync('edge_queue')
+            response_body = self.comm.consume_message_sync('gradient_queue')
             response = pickle.loads(response_body)
 
             server_grad_numpy = response['gradient']
@@ -301,7 +301,7 @@ class TrainerServer:
                 'gradient': grads_to_send,
                 'loss': loss_items
             }
-            self.comm.publish_message('edge_queue', pickle.dumps(response))
+            self.comm.publish_message('gradient_queue', pickle.dumps(response))
 
             train_progress_bar.set_postfix(
                 total_loss=f'{total_loss.item():.4f}',
