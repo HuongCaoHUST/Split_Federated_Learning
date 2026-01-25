@@ -44,7 +44,7 @@ class TrainerEdge:
         self.datasets = datasets
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root, layer_id)
+        self.run_dir = create_run_dir(project_root, layer_id, client_id)
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -61,7 +61,7 @@ class TrainerEdge:
         self.comm.create_queue(self.gradient_queue_name)
 
         # Initialize model
-        self.data_cfg = check_det_dataset(self.datasets[0])
+        self.data_cfg = check_det_dataset(self.datasets)
         self.num_classes = self.data_cfg['nc']
         self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
 

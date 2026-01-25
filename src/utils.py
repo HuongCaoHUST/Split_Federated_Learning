@@ -94,7 +94,7 @@ def count_parameters(model):
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def create_run_dir(project_root, layer_id=None):
+def create_run_dir(project_root, layer_id=None, client_id=None):
     """
     Creates a new directory for the current run to save results.
     """
@@ -103,7 +103,9 @@ def create_run_dir(project_root, layer_id=None):
 
     run_idx = 1
     while True:
-        if layer_id is not None:
+        if layer_id and client_id is not None:
+            run_name = f"run_{layer_id}_{client_id}"
+        elif layer_id is not None:
             run_name = f"run_{layer_id}_{run_idx}"
         else:
             run_name = f"run_{run_idx}"

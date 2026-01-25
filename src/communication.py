@@ -140,17 +140,19 @@ class Communication:
         """
         Sends register message to centralized server.
         """
-        for id in client_ids:
+        for i, client_id in enumerate(client_ids):
             payload = {
                 'action': 'start'
             }
-            if datasets is not None: payload['datasets'] = datasets
-            if nb and nc is not None:
+            if datasets is not None and i < len(datasets):
+                dataset = datasets[i]
+                if dataset is not None: payload['datasets'] = dataset
+            if nb is not None and nc is not None:
                 payload['nb'] = nb
                 payload['nc'] = nc
                 payload['class_names'] = class_names
                 
-            self.publish_message(f'client_queue_{id}', pickle.dumps(payload))
+            self.publish_message(f'client_queue_{client_id}', pickle.dumps(payload))
 
     def send_training_metadata(self, queue_name, client_id, nb_train = None, nb_val = None):
         """

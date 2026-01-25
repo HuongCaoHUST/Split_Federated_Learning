@@ -73,7 +73,7 @@ class Server:
                     self.num_classes = self.data_cfg['nc']
                     self.class_names = self.data_cfg['names']
                     nb = self.get_total_nb_by_layer(layer_id = 1)
-                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), nb = nb, nc = self.num_classes, class_names = self.class_names)
+                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), datasets = None, nb = nb, nc = self.num_classes, class_names = self.class_names)
 
             elif action == 'update_model':
                 model_data = payload.get('model_data')

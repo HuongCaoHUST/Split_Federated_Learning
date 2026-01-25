@@ -30,7 +30,6 @@ class Client:
             self.class_names = payload.get('class_names')
 
             print(f"Received action: {action}")
-
             if action == 'start':
                 self.run()
             else:
