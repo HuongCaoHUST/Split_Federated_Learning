@@ -40,6 +40,7 @@ class Server:
         self.num_epochs = config['training']['num_epochs']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
+        self.epoch = 1
         
         self.mlflow_connector = MLflowConnector(
             tracking_uri=MLFLOW_TRACKING_URI,
@@ -101,6 +102,7 @@ class Server:
             elif action == 'update_model':
                 model_data = payload.get('model_data')
                 layer_id = payload.get('layer_id')
+                client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
                 if layer_id == 2:
                     self.box_loss = payload.get('box_loss')
@@ -111,22 +113,21 @@ class Server:
                 with open(save_path, "wb") as f:
                     f.write(model_data)
 
-                if layer_id == 1:
-                    self.intermediate_model[0] += 1
-                    self.intermediate_model_layer_1.append(save_path)
-                else:
-                    self.intermediate_model[1] += 1
-                    self.intermediate_model_layer_2.append(save_path)
+                idx = layer_id - 1
+                self.intermediate_model[idx] += 1
+                self.client[client_id][f"model_{epoch+1}"] = save_path
 
                 if self.intermediate_model == self.num_client:
                     model_full = YOLO11_Full(nc = self.num_classes)
-                    print("Edge model: ", self.intermediate_model_layer_1[0])
-                    print("Server model: ", self.intermediate_model_layer_2[0])
+                    edge_model = self.get_models_by_layer_and_epoch(layer_id=1, epoch=self.epoch)
+                    server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
+                    print("Edge model: ", edge_model)
+                    print("Server model: ", server_model)
                     
                     self.model = self.merged_model(
                         model_full,
-                        edge_pt_path=self.intermediate_model_layer_1[0],
-                        server_pt_path=self.intermediate_model_layer_2[0]
+                        edge_pt_path=edge_model,
+                        server_pt_path=server_model
                     ).to(self.device)
 
                     self.data_cfg = check_det_dataset(self.datasets[0])
@@ -169,8 +170,7 @@ class Server:
                         }, step=epoch+1)
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
                     self.intermediate_model = [0,0]
-                    self.intermediate_model_layer_1 = []
-                    self.intermediate_model_layer_2 = []
+                    self.epoch += 1
 
             else:
                 print(f"Unknown action: {action}")
@@ -182,6 +182,15 @@ class Server:
 
     def get_client_ids_by_layer(self, layer_id):
         return [client_id for client_id, info in self.client.items() if info.get("layer_id") == layer_id]
+    
+    def get_models_by_layer_and_epoch(self, layer_id, epoch):
+        key = f"model_{epoch}"
+        models = []
+        for client_id, info in self.client.items():
+            if info.get("layer_id") == layer_id and key in info:
+                nb = info.get("nb_train", 0)
+                models.append((info[key], nb))
+        return models
     
     def get_total_nb_by_layer(self, layer_id):
         return sum(info.get("nb_train", 0) for info in self.client.values() if info.get("layer_id") == layer_id)

@@ -166,7 +166,7 @@ class Communication:
         }
         self.publish_message(queue_name, pickle.dumps(payload))
 
-    def publish_model(self, queue_name, model_path, layer_id = None, epoch = None, loss_items = None):
+    def publish_model(self, queue_name, model_path, layer_id = None, client_id = None, epoch = None, loss_items = None):
 
         try:
             if not os.path.exists(model_path):
@@ -180,6 +180,7 @@ class Communication:
                     'action': 'update_model',
                     'model_data': model_data,
                     'layer_id': layer_id,
+                    'client_id': client_id,
                     'epoch': epoch
                 }
 

@@ -200,7 +200,7 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = epoch)
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = epoch)
         
         print("Finished Training.")
         self.post_processing()
@@ -351,7 +351,8 @@ class TrainerServer:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = epoch, loss_items = loss_items)
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id,
+                                    epoch = epoch, loss_items = loss_items)
             
             # Log to CSV
             update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)
