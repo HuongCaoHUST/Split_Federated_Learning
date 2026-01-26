@@ -112,6 +112,7 @@ class TrainerEdge:
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        batch_idx = 0
         
         for batch in train_progress_bar:
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
@@ -152,7 +153,11 @@ class TrainerEdge:
             self.optimizer.step()
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
-        clear_memory(device = self.device, threshold=0.85)
+            batch_idx +=1
+            print("Batch IDX: ", batch_idx)
+            if batch_idx % 100 == 0:
+                clear_memory(device = self.device, threshold=0.85)
+        clear_memory(device = self.device, threshold=0.8)
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
         return avg_train_loss
