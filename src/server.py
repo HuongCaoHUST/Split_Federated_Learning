@@ -221,7 +221,7 @@ class Server:
             for key, value in client_state.items():
                 clean_key = key.replace('model.', '').replace('layers.', '')
                 layer_idx = int(clean_key.split('.')[0])
-                if layer_idx <= 10:
+                if layer_idx <= 20:
                     if clean_key not in averaged_edge_state:
                         averaged_edge_state[clean_key] = value * weight_factor
                     else:
