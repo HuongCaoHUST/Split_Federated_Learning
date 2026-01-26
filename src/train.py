@@ -154,9 +154,8 @@ class TrainerEdge:
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
             batch_idx +=1
-            print("Batch IDX: ", batch_idx)
             if batch_idx % 100 == 0:
-                clear_memory(device = self.device, threshold=0.85)
+                clear_memory(device = self.device, threshold=0.8)
         clear_memory(device = self.device, threshold=0.8)
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
@@ -278,6 +277,7 @@ class TrainerServer:
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(range(self.nb), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        batch_idx = 0
         
         for i in train_progress_bar:
             body = self.comm.consume_message_sync('intermediate_queue')
@@ -319,6 +319,11 @@ class TrainerServer:
             )
 
             running_loss += total_loss.item()
+
+            batch_idx +=1
+            if batch_idx % 100 == 0:
+                clear_memory(device = self.device, threshold=0.8)
+        clear_memory(device = self.device, threshold=0.8)
         return running_loss / len(train_progress_bar), loss_items
 
     def validate_one_epoch(self, epoch):
