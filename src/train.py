@@ -30,7 +30,7 @@ MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
 
 class TrainerEdge:
-    def __init__(self, config, device, project_root, comm, layer_id, client_id, datasets):
+    def __init__(self, config, device, project_root, comm, layer_id, client_id, datasets, global_model_path = None):
         self.config = config
         self.device = device
         self.project_root = project_root
@@ -38,6 +38,7 @@ class TrainerEdge:
         self.layer_id = layer_id
         self.client_id = client_id
         self.datasets = datasets
+        self.global_model_path = global_model_path
         
         # Set Hyperparameters
         self.run_dir = create_run_dir(project_root, layer_id, client_id)
@@ -59,7 +60,11 @@ class TrainerEdge:
         # Initialize model
         self.data_cfg = check_det_dataset(self.datasets)
         self.num_classes = self.data_cfg['nc']
-        self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
+        if self.global_model_path is not None:
+            print("Continue Training with global model: ", self.global_model_path)
+            self.model = YOLO11_EDGE(pretrained = self.global_model_path).to(self.device)
+        else:
+            self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
 
         self.model.names = self.data_cfg['names']
         self.yolo_args = get_cfg(DEFAULT_CFG)
@@ -204,7 +209,6 @@ class TrainerEdge:
         
         print("Finished Training.")
         self.post_processing()
-        self.comm.close()
 
 class TrainerServer:
     def __init__(self, config, device, project_root, comm, layer_id, client_id, nb, nc, class_names):
@@ -359,4 +363,4 @@ class TrainerServer:
         
         print("Finished Training.")
         self.post_processing()
-        self.comm.close()
+        # self.comm.close()

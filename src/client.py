@@ -12,6 +12,7 @@ class Client:
         self.project_root = project_root
         self.layer_id = layer_id
         self.client_id = client_id
+        self.global_model_path = None
 
         time.sleep(5)
         self.comm.connect()
@@ -24,14 +25,20 @@ class Client:
         try:
             payload = pickle.loads(body)
             action = payload.get('action')
-            self.datasets = payload.get('datasets')
-            self.nb = payload.get('nb')
-            self.nc = payload.get('nc')
-            self.class_names = payload.get('class_names')
+            if payload.get('datasets') is not None: self.datasets = payload.get('datasets')
+            if payload.get('nb') is not None: self.nb = payload.get('nb')
+            if payload.get('nc') is not None: self.nc = payload.get('nc')
+            if payload.get('class_names') is not None: self.class_names = payload.get('class_names')
 
             print(f"Received action: {action}")
             if action == 'start':
                 self.run()
+            elif action == 'update_global_model':
+                self.global_model_path = payload.get('global_model')
+                print("Global model: ", self.global_model_path)
+                self.run()
+            elif action == 'stop':
+                self.comm.close()
             else:
                 print(f"Unknown action: {action}")
 
@@ -43,11 +50,11 @@ class Client:
     def run(self):
         print("Client class initialized.")
         if self.layer_id == 1:
-            time.sleep(10)
-            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.datasets)
+            time.sleep(1)
+            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.datasets, self.global_model_path)
             trainer.run()
         elif self.layer_id == 2:
-            time.sleep(10)
+            time.sleep(1)
             trainer = TrainerServer(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.nb, self.nc, self.class_names)
             trainer.run()
         else:

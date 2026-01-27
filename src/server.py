@@ -38,6 +38,7 @@ class Server:
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
+        self.num_rounds = config['training']['num_rounds']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.epoch = 1
@@ -171,15 +172,18 @@ class Server:
                         }, step=epoch+1)
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
                     self.intermediate_model = [0,0]
-                    self.epoch += 1
 
-                    save_path = f"{self.run_dir}/global_model_{self.round}.pt"
-                    ckpt = {'model': self.model,
-                            'train_args': {},
-                            'epoch': -1}
-                    torch.save(ckpt, save_path)
-                    print(f"Model saved to {save_path}")
-                    self.round += 1
+                    if self.epoch == self.num_epochs:
+                        save_path = f"{self.run_dir}/global_model_{self.round}.pt"
+                        ckpt = {'model': self.model,
+                                'train_args': self.yolo_args,
+                                'epoch': -1}
+                        torch.save(ckpt, save_path)
+                        print(f"Model saved to {save_path}")
+                        self.comm.publish_global_model(self.get_client_ids_by_layer(layer_id = 1), global_model_path = save_path)
+                        self.round += 1
+
+                    self.epoch += 1
             else:
                 print(f"Unknown action: {action}")
 
