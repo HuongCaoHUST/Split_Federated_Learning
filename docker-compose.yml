@@ -30,18 +30,18 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "0"]
-    shm_size: '4gb'
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # shm_size: '4gb'
+    # ulimits:
+    #   nofile:
+    #     soft: 65536
+    #     hard: 65536
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   torch_1:
     image: cnn_training:latest
@@ -56,18 +56,18 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "1"]
-    shm_size: '4gb'
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # shm_size: '4gb'
+    # ulimits:
+    #   nofile:
+    #     soft: 65536
+    #     hard: 65536
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   torch_2:
     image: cnn_training:latest
@@ -82,18 +82,18 @@ services:
     tty: true
     stdin_open: true
     command: ["python", "main.py", "--layer_id", "2"]
-    shm_size: '4gb'
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # shm_size: '4gb'
+    # ulimits:
+    #   nofile:
+    #     soft: 65536
+    #     hard: 65536
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
 volumes:
   rabbitmq_data:

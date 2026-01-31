@@ -114,6 +114,7 @@ class Server:
                 save_path = f"{self.run_dir}/client_layer_{layer_id}_epoch_{epoch+1}.pt"
                 with open(save_path, "wb") as f:
                     f.write(model_data)
+                print("Save path: ", save_path)
 
                 idx = layer_id - 1
                 self.intermediate_model[idx] += 1
@@ -174,13 +175,15 @@ class Server:
                     self.intermediate_model = [0,0]
 
                     if self.epoch == self.num_epochs:
+                        args_dict = vars(self.yolo_args)
                         save_path = f"{self.run_dir}/global_model_{self.round}.pt"
                         ckpt = {'model': self.model,
-                                'train_args': self.yolo_args,
+                                'args': args_dict,
+                                'train_args': args_dict,
                                 'epoch': -1}
                         torch.save(ckpt, save_path)
                         print(f"Model saved to {save_path}")
-                        self.comm.publish_global_model(self.get_client_ids_by_layer(layer_id = 1), global_model_path = save_path)
+                        self.comm.publish_global_model(self.get_client_ids_by_layer(), global_model_path = save_path, round = self.round)
                         self.round += 1
 
                     self.epoch += 1
@@ -192,8 +195,11 @@ class Server:
         except Exception as e:
             print(f"Error processing message: {e}")
 
-    def get_client_ids_by_layer(self, layer_id):
-        return [client_id for client_id, info in self.client.items() if info.get("layer_id") == layer_id]
+    def get_client_ids_by_layer(self, layer_id=None):
+        return [
+            client_id for client_id, info in self.client.items() 
+            if layer_id is None or info.get("layer_id") == layer_id
+        ]
     
     def get_models_by_layer_and_epoch(self, layer_id, epoch):
         key = f"model_{epoch}"

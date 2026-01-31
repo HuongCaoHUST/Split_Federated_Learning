@@ -30,7 +30,7 @@ MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
 
 class TrainerEdge:
-    def __init__(self, config, device, project_root, comm, layer_id, client_id, datasets, global_model_path = None):
+    def __init__(self, config, device, project_root, comm, run_dir, layer_id, client_id, datasets, global_model_path = None, round = 0):
         self.config = config
         self.device = device
         self.project_root = project_root
@@ -39,9 +39,10 @@ class TrainerEdge:
         self.client_id = client_id
         self.datasets = datasets
         self.global_model_path = global_model_path
+        self.round = round
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root, layer_id, client_id)
+        self.run_dir = run_dir
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -202,7 +203,10 @@ class TrainerEdge:
             print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
 
             # Save checkpoint
-            save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
+            else: global_epoch = epoch
+
+            save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
             self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = epoch)
@@ -211,7 +215,7 @@ class TrainerEdge:
         self.post_processing()
 
 class TrainerServer:
-    def __init__(self, config, device, project_root, comm, layer_id, client_id, nb, nc, class_names):
+    def __init__(self, config, device, project_root, comm, run_dir, layer_id, client_id, nb, nc, class_names, global_model_path = None, round = None):
         self.config = config
         self.device = device
         self.project_root = project_root
@@ -221,9 +225,11 @@ class TrainerServer:
         self.nb = nb
         self.nc = nc
         self.class_names = class_names
+        self.global_model_path = global_model_path
+        self.round = round
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root, layer_id)
+        self.run_dir = run_dir
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
@@ -235,7 +241,12 @@ class TrainerServer:
         self.save_model_enabled = config['model'].get('save_model', True)
 
         # Initialize model
-        self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+        if self.global_model_path is not None:
+            print("Continue Training with global model: ", self.global_model_path)
+            self.model = YOLO11_SERVER(pretrained = self.global_model_path, nc = self.nc).to(self.device)
+        else:
+            self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+            
         self.model.names = self.class_names
         self.yolo_args = get_cfg(DEFAULT_CFG)
         self.model.args = self.yolo_args
@@ -352,7 +363,10 @@ class TrainerServer:
             # avg_val_loss, val_accuracy = self.validate_one_epoch(epoch)
 
             # Save checkpoint
-            save_path = os.path.join(self.run_dir, f'cifar_net_server_{epoch+1}.pt')
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
+            else: global_epoch = epoch
+
+            save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
             self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id,

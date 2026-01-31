@@ -194,7 +194,7 @@ class Communication:
         except Exception as e:
             print(f"An error occurred while publishing the model: {e}")
 
-    def publish_global_model(self, client_ids = None, global_model_path = None):
+    def publish_global_model(self, client_ids = None, global_model_path = None, round = None):
 
         try:
             for i, client_id in enumerate(client_ids):
@@ -207,7 +207,8 @@ class Communication:
 
                     payload = {
                         'action': 'update_global_model',
-                        'global_model': global_model_path
+                        'global_model': global_model_path,
+                        'round': round
                     }
                 queue_name = f'client_queue_{client_id}'
                 self.publish_message(queue_name, pickle.dumps(payload))
