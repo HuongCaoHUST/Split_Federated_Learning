@@ -174,7 +174,7 @@ class Server:
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
                     self.intermediate_model = [0,0]
 
-                    if self.epoch == self.num_epochs:
+                    if self.epoch % self.num_epochs == 0 and  self.round < self.num_rounds:
                         args_dict = vars(self.yolo_args)
                         save_path = f"{self.run_dir}/global_model_{self.round}.pt"
                         ckpt = {'model': self.model,
