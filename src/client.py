@@ -2,6 +2,7 @@ from src.communication import Communication
 from src.train import TrainerEdge, TrainerServer
 import time
 import pickle
+from src.utils import create_run_dir
 
 class Client:
     def __init__(self, config, device, project_root, layer_id, client_id):
@@ -13,6 +14,8 @@ class Client:
         self.layer_id = layer_id
         self.client_id = client_id
         self.global_model_path = None
+        self.run_dir = create_run_dir(project_root, layer_id, client_id)
+        self.round = 0
 
         time.sleep(5)
         self.comm.connect()
@@ -35,7 +38,7 @@ class Client:
                 self.run()
             elif action == 'update_global_model':
                 self.global_model_path = payload.get('global_model')
-                print("Global model: ", self.global_model_path)
+                self.round = payload.get('round')
                 self.run()
             elif action == 'stop':
                 self.comm.close()
@@ -51,11 +54,11 @@ class Client:
         print("Client class initialized.")
         if self.layer_id == 1:
             time.sleep(1)
-            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.datasets, self.global_model_path)
+            trainer = TrainerEdge(self.config, self.device, self.project_root, self.comm, self.run_dir, self.layer_id, self.client_id, self.datasets, self.global_model_path, self.round)
             trainer.run()
         elif self.layer_id == 2:
             time.sleep(1)
-            trainer = TrainerServer(self.config, self.device, self.project_root, self.comm, self.layer_id, self.client_id, self.nb, self.nc, self.class_names)
+            trainer = TrainerServer(self.config, self.device, self.project_root, self.comm, self.run_dir, self.layer_id, self.client_id, self.nb, self.nc, self.class_names, self.global_model_path, self.round)
             trainer.run()
         else:
             print(f"Error layer id: {self.layer_id}")
