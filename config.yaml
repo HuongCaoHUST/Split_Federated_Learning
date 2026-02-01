@@ -14,6 +14,7 @@ training:
 model:
   edge: 'AlexNet_EDGE'
   server: 'AlexNet_SERVER'
+  cut_layer: 10
   save_path: 'cifar_net.pth'
   save_model: true
   pretrained_path: './yolo11n.pt'

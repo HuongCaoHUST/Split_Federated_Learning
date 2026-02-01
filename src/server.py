@@ -41,6 +41,7 @@ class Server:
         self.num_rounds = config['training']['num_rounds']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
+        self.cut_layer = config['model'].get('cut_layer')
         self.epoch = 1
         self.round = 1 
         
@@ -239,7 +240,7 @@ class Server:
             for key, value in client_state.items():
                 clean_key = key.replace('model.', '').replace('layers.', '')
                 layer_idx = int(clean_key.split('.')[0])
-                if layer_idx <= 10:
+                if layer_idx <= self.cut_layer:
                     if clean_key not in averaged_edge_state:
                         averaged_edge_state[clean_key] = value * weight_factor
                     else:
@@ -254,7 +255,7 @@ class Server:
                     print(f"Incorrect size at {target_key}: Code {full_sd[target_key].shape} != File {value.shape}")
         
         # Server side model
-        SERVER_OFFSET = 11
+        SERVER_OFFSET = self.cut_layer + 1
         for key, value in server_state.items():
             clean_key = key.replace('model.', '').replace('layers.', '')
             parts = clean_key.split('.')
