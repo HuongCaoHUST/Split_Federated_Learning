@@ -44,6 +44,10 @@ class Server:
         self.cut_layer = config['model'].get('cut_layer')
         self.epoch = 1
         self.round = 1 
+
+        self.box_loss = []
+        self.cls_loss = []
+        self.dfl_loss = []
         
         self.mlflow_connector = MLflowConnector(
             tracking_uri=MLFLOW_TRACKING_URI,
@@ -108,9 +112,9 @@ class Server:
                 client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
                 if layer_id == 2:
-                    self.box_loss = payload.get('box_loss')
-                    self.cls_loss = payload.get('cls_loss')
-                    self.dfl_loss = payload.get('dfl_loss')
+                    self.box_loss.append(payload.get('box_loss'))
+                    self.cls_loss.append(payload.get('cls_loss'))
+                    self.dfl_loss.append(payload.get('dfl_loss'))
 
                 save_path = f"{self.run_dir}/client_layer_{layer_id}_epoch_{epoch+1}.pt"
                 with open(save_path, "wb") as f:
@@ -161,9 +165,9 @@ class Server:
                     avg_val_loss, val_loss_items, map50, map5095, mp, mr = self.validate_one_epoch(epoch)
 
                     self.mlflow_connector.log_metrics({
-                        "train/box_loss": self.box_loss,
-                        "train/cls_loss": self.cls_loss,
-                        "train/dfl_loss": self.dfl_loss,
+                        "train/box_loss": self.box_loss[self.epoch - 1],
+                        "train/cls_loss": self.cls_loss[self.epoch - 1],
+                        "train/dfl_loss": self.dfl_loss[self.epoch - 1],
                         "val/box_loss": val_loss_items[0].item(),
                         "val/cls_loss": val_loss_items[1].item(),
                         "val/dfl_loss": val_loss_items[2].item(),
