@@ -44,6 +44,7 @@ class Server:
         self.cut_layer = config['model'].get('cut_layer')
         self.epoch = 1
         self.round = 1 
+        self.best_fitness = 0.0
 
         self.box_loss = []
         self.cls_loss = []
@@ -177,8 +178,23 @@ class Server:
                         "metrics/mAP50-95": map5095,             
                         }, step=epoch+1)
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
-                    self.intermediate_model = [0,0]
 
+                    # Save best model
+                    if map50 > self.best_fitness:
+                        self.best_fitness = map50
+                        best_path = f"{self.run_dir}/best.pt"
+                        args_dict = vars(self.yolo_args)
+                        best_ckpt = {
+                            'model': self.model,
+                            'args': args_dict,
+                            'train_args': args_dict,
+                            'epoch': epoch,
+                            'metrics': {'mAP50': map50, 'mAP50-95': map5095}
+                        }
+                        torch.save(best_ckpt, best_path)
+                        print(f"New best model saved to {best_path}")
+
+                    # Save global model
                     if self.epoch % self.num_epochs == 0 and  self.round < self.num_rounds:
                         args_dict = vars(self.yolo_args)
                         save_path = f"{self.run_dir}/global_model_{self.round}.pt"
@@ -190,7 +206,8 @@ class Server:
                         print(f"Model saved to {save_path}")
                         self.comm.publish_global_model(self.get_client_ids_by_layer(), global_model_path = save_path, round = self.round)
                         self.round += 1
-
+                    
+                    self.intermediate_model = [0,0]
                     self.epoch += 1
             else:
                 print(f"Unknown action: {action}")
