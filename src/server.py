@@ -185,7 +185,9 @@ class Server:
                         best_path = f"{self.run_dir}/best.pt"
                         args_dict = vars(self.yolo_args)
                         best_ckpt = {
-                            'model': self.model,
+                            'model': self.model.state_dict(),
+                            'nc': self.num_classes,
+                            'names': self.class_names,
                             'args': args_dict,
                             'train_args': args_dict,
                             'epoch': epoch,
