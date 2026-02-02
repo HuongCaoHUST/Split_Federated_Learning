@@ -11,12 +11,12 @@ colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(80)]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = YOLO11_Full(nc=20) 
-ckpt = torch.load("train_results/2-2/Livingroom_Non-IID_cut_10.pt", map_location=device, weights_only=False)
+ckpt = torch.load("train_results/2-2/Livingroom_IID_cut_5.pt", map_location=device, weights_only=False)
 names = ckpt.get('names', {i: f"class_{i}" for i in range(80)})
 model.load_state_dict(ckpt['model'])
 model.to(device).eval()
 
-img_path = "test_2.jpg"
+img_path = "test_3.jpg"
 ori_img = cv2.imread(img_path)
 
 img_resized = LetterBox(new_shape=(640, 640), auto=False, stride=32)(image=ori_img)
@@ -31,7 +31,7 @@ with torch.no_grad():
     if isinstance(results, list):
         results = results[0] 
 
-preds = nms.non_max_suppression(results, conf_thres=0.7, iou_thres=0.7)
+preds = nms.non_max_suppression(results, conf_thres=0.7, iou_thres=0.5)
 
 for i, det in enumerate(preds):
     if len(det):
