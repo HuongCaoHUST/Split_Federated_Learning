@@ -124,11 +124,11 @@ class Server:
                 idx = layer_id - 1
                 self.intermediate_model[idx] += 1
                 self.client[client_id][f"model_{epoch+1}"] = save_path
+                edge_model = self.get_models_by_layer_and_epoch(layer_id=1, epoch=self.epoch)
+                server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
 
-                if self.intermediate_model == self.num_client:
+                if len(edge_model) == self.num_client[0] and len(server_model) == self.num_client[1]:
                     model_full = YOLO11_Full(nc = self.num_classes)
-                    edge_model = self.get_models_by_layer_and_epoch(layer_id=1, epoch=self.epoch)
-                    server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
                     print("Edge model: ", edge_model)
                     print("Server model: ", server_model)
                     
