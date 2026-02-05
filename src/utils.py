@@ -7,6 +7,7 @@ import yaml
 import torch
 import psutil
 import gc
+import time
 
 def update_results_csv(epoch, train_loss, val_loss=None, val_accuracy=None, save_dir = './results'):
     """
@@ -183,3 +184,27 @@ def clear_memory(device, threshold: float = 0.85):
             torch.mps.empty_cache()
         elif device.type == "cuda":
             torch.cuda.empty_cache()
+
+class BatchLogger:
+    def __init__(self, filename="batch_latency.csv"):
+        self.filename = filename
+        self.header = ['epoch', 'batch_index', 'latency_seconds', 'payload_size_mb']
+        self.global_batch_idx = 1
+        
+        if not os.path.exists(self.filename):
+            with open(self.filename, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(self.header)
+
+    def log_batch(self, epoch, latency, data_bytes):
+        size_mb = len(data_bytes) / (1024 * 1024)
+        with open(self.filename, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch, 
+                self.global_batch_idx, 
+                f"{latency:.4f}", 
+                f"{size_mb:.4f}"
+            ])
+            f.flush()
+        self.global_batch_idx += 1

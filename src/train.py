@@ -16,7 +16,7 @@ from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
 from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER
-from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
+from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
@@ -57,6 +57,9 @@ class TrainerEdge:
         # Create gradient queue
         self.gradient_queue_name = f'gradient_queue_{client_id}'
         self.comm.create_queue(self.gradient_queue_name)
+
+        # Initialize batch logger
+        self.batch_logger = BatchLogger("training_log.csv")
 
         # Initialize model
         self.data_cfg = check_det_dataset(self.datasets)
@@ -111,6 +114,7 @@ class TrainerEdge:
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for batch in train_progress_bar:
+            start_time = time.time()
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
             outputs = self.model(images)
             print("Outputs shapes: ", [o.shape for o in outputs])
@@ -147,6 +151,9 @@ class TrainerEdge:
 
             torch.autograd.backward(outputs, grad_tensors)
             self.optimizer.step()
+
+            latency = time.time() - start_time
+            self.batch_logger.log_batch(epoch + 1, latency, data_bytes)
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
         clear_memory(device = self.device, threshold=0.85)
