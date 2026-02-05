@@ -186,9 +186,10 @@ def clear_memory(device, threshold: float = 0.85):
             torch.cuda.empty_cache()
 
 class BatchLogger:
-    def __init__(self, filename="batch_latency.csv"):
+    def __init__(self, client_id, filename="batch_latency.csv"):
+        self.client_id = client_id
         self.filename = filename
-        self.header = ['epoch', 'batch_index', 'latency_seconds', 'payload_size_mb']
+        self.header = ['client_id', 'epoch', 'batch_index', 'latency_seconds', 'payload_size_mb', 'edge_forward', 'edge_backward', 'server_forward', 'server_backward', 'inter_delay', 'grad_delay']
         self.global_batch_idx = 1
         
         if not os.path.exists(self.filename):
@@ -196,15 +197,22 @@ class BatchLogger:
                 writer = csv.writer(f)
                 writer.writerow(self.header)
 
-    def log_batch(self, epoch, latency, data_bytes):
-        size_mb = len(data_bytes) / (1024 * 1024)
+    def log_batch(self, epoch, latency, data_bytes, edge_forward, edge_backward, server_forward, server_backward, inter_delay, grad_delay):
+        size_mb = 2* (len(data_bytes) / (1024 * 1024))
         with open(self.filename, mode='a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
+                self.client_id,
                 epoch, 
                 self.global_batch_idx, 
                 f"{latency:.4f}", 
-                f"{size_mb:.4f}"
+                f"{size_mb:.4f}",
+                f"{edge_forward:.4f}", 
+                f"{edge_backward:.4f}",
+                f"{server_forward:.4f}",
+                f"{server_backward:.4f}",
+                f"{inter_delay:.4f}",
+                f"{grad_delay:.4f}"
             ])
             f.flush()
         self.global_batch_idx += 1

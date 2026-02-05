@@ -59,7 +59,7 @@ class TrainerEdge:
         self.comm.create_queue(self.gradient_queue_name)
 
         # Initialize batch logger
-        self.batch_logger = BatchLogger("training_log.csv")
+        self.batch_logger = BatchLogger(self.client_id, "training_log.csv")
 
         # Initialize model
         self.data_cfg = check_det_dataset(self.datasets)
@@ -114,7 +114,7 @@ class TrainerEdge:
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for batch in train_progress_bar:
-            start_time = time.time()
+            start_batch_time = time.time()
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
             outputs = self.model(images)
             print("Outputs shapes: ", [o.shape for o in outputs])
@@ -124,7 +124,6 @@ class TrainerEdge:
                 "bboxes":    batch["bboxes"].cpu(),
                 "cls":       batch["cls"].cpu()
             }
-
             payload = {
                 'client_output': [x.detach().cpu().numpy() for x in outputs],
                 'label_data': label_data,
@@ -133,12 +132,19 @@ class TrainerEdge:
 
             data_bytes = pickle.dumps(payload)
             self.comm.publish_message(queue_name='intermediate_queue', message=data_bytes)
+            send_inter_time = time.time()
 
             response_body = self.comm.consume_message_sync(self.gradient_queue_name)
+            received_grad_time = time.time()
             response = pickle.loads(response_body)
+            print("Received response keys: ", response.keys())
 
             server_grad_numpy = response['gradient']
             batch_loss = response['loss']
+            server_forward_time = response.get('server_forward_time')
+            server_backward_time = response.get('server_backward_time')
+            receive_inter_time = response.get('receive_inter_time')
+            send_grad_time = response.get('send_grad_time')
 
             self.optimizer.zero_grad()
 
@@ -152,8 +158,15 @@ class TrainerEdge:
             torch.autograd.backward(outputs, grad_tensors)
             self.optimizer.step()
 
-            latency = time.time() - start_time
-            self.batch_logger.log_batch(epoch + 1, latency, data_bytes)
+            end_batch_time = time.time()
+            latency = end_batch_time - start_batch_time
+            self.batch_logger.log_batch(epoch + 1, latency, data_bytes, 
+                                        edge_forward = send_inter_time - start_batch_time,
+                                        edge_backward = end_batch_time - received_grad_time,
+                                        server_forward = server_forward_time,
+                                        server_backward = server_backward_time,
+                                        inter_delay = receive_inter_time - send_inter_time,
+                                        grad_delay = received_grad_time - send_grad_time)
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
         clear_memory(device = self.device, threshold=0.85)
@@ -281,6 +294,7 @@ class TrainerServer:
         
         for i in train_progress_bar:
             body = self.comm.consume_message_sync('intermediate_queue')
+            receive_inter_time = time.time()
             payload = pickle.loads(body)
             client_data_numpy = payload['client_output']
             label_data = payload['label_data']
@@ -297,17 +311,23 @@ class TrainerServer:
                 client_tensors.append(t)
 
             outputs = self.model(client_tensors)
+            end_server_forward_time = time.time()
             loss, loss_items = self.criterion(outputs, label_data)
             self.optimizer.zero_grad()
 
             total_loss = loss.sum()
             total_loss.backward()
             self.optimizer.step()
+            end_server_backward_time = time.time()
 
             grads_to_send = [t.grad.cpu() for t in client_tensors]
             response = {
                 'gradient': grads_to_send,
-                'loss': loss_items
+                'loss': loss_items,
+                'server_forward_time': end_server_forward_time - receive_inter_time,
+                'server_backward_time': end_server_backward_time - end_server_forward_time,
+                'receive_inter_time': receive_inter_time,
+                'send_grad_time': end_server_backward_time
             }
             self.comm.publish_message(gradient_queue, pickle.dumps(response))
 
