@@ -50,6 +50,7 @@ class TrainerEdge:
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['edge']
+        self.cut_layer = config['model']['cut_layer']
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
         self.pretrained_path = config['model'].get('pretrained_path')
@@ -64,11 +65,21 @@ class TrainerEdge:
         # Initialize model
         self.data_cfg = check_det_dataset(self.datasets)
         self.num_classes = self.data_cfg['nc']
+
+        MODEL_MAP = {
+            5: YOLO11_EDGE_5,
+            10: YOLO11_EDGE,
+            15: YOLO11_EDGE_15,
+            20: YOLO11_EDGE_20
+        }
+
+        model_class = MODEL_MAP.get(self.cut_layer)
+
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
-            self.model = YOLO11_EDGE(pretrained = self.global_model_path).to(self.device)
+            self.model = model_class(pretrained = self.global_model_path).to(self.device)
         else:
-            self.model = YOLO11_EDGE(pretrained = 'yolo11n.pt').to(self.device)
+            self.model = model_class(pretrained = 'yolo11n.pt').to(self.device)
 
         self.model.names = self.data_cfg['names']
         self.yolo_args = get_cfg(DEFAULT_CFG)
@@ -271,15 +282,25 @@ class TrainerServer:
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['server']
+        self.cut_layer = config['model']['cut_layer']
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
+
+        MODEL_MAP = {
+            5: YOLO11_SERVER_5,
+            10: YOLO11_SERVER,
+            15: YOLO11_SERVER_15,
+            20: YOLO11_SERVER_20
+        }
+
+        model_class = MODEL_MAP.get(self.cut_layer)
 
         # Initialize model
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
-            self.model = YOLO11_SERVER(pretrained = self.global_model_path, nc = self.nc).to(self.device)
+            self.model = model_class(pretrained = self.global_model_path, nc = self.nc).to(self.device)
         else:
-            self.model = YOLO11_SERVER(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+            self.model = model_class(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
             
         self.model.names = self.class_names
         self.yolo_args = get_cfg(DEFAULT_CFG)
