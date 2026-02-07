@@ -50,6 +50,14 @@ class Server:
         self.box_loss = []
         self.cls_loss = []
         self.dfl_loss = []
+
+        self.batch_e2e = []
+        self.edge_forward = []
+        self.edge_backward = []
+        self.server_forward = []
+        self.server_backward = []
+        self.inter_delay = []
+        self.grad_delay = []
         
         self.mlflow_connector = MLflowConnector(
             tracking_uri=MLFLOW_TRACKING_URI,
@@ -116,7 +124,15 @@ class Server:
                 layer_id = payload.get('layer_id')
                 client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
-                if layer_id == 2:
+                if layer_id == 1:
+                    self.batch_e2e.append(payload.get('batch_e2e'))
+                    self.edge_forward.append(payload.get('edge_forward'))
+                    self.edge_backward.append(payload.get('edge_backward'))
+                    self.server_forward.append(payload.get('server_forward'))
+                    self.server_backward.append(payload.get('server_backward'))
+                    self.inter_delay.append(payload.get('inter_delay'))
+                    self.grad_delay.append(payload.get('grad_delay'))
+                elif layer_id == 2:
                     self.box_loss.append(payload.get('box_loss'))
                     self.cls_loss.append(payload.get('cls_loss'))
                     self.dfl_loss.append(payload.get('dfl_loss'))
@@ -179,7 +195,14 @@ class Server:
                         "metrics/precision": mp,
                         "metrics/recall": mr,
                         "metrics/mAP50": map50,
-                        "metrics/mAP50-95": map5095,             
+                        "metrics/mAP50-95": map5095,
+                        "latency/batch_e2e": self.batch_e2e[self.epoch - 1],
+                        "latency/edge_forward": self.edge_forward[self.epoch - 1],
+                        "latency/edge_backward": self.edge_backward[self.epoch - 1],
+                        "latency/server_forward": self.server_forward[self.epoch - 1],
+                        "latency/server_backward": self.server_backward[self.epoch - 1],
+                        "latency/inter_delay": self.inter_delay[self.epoch - 1],
+                        "latency/grad_delay": self.grad_delay[self.epoch - 1],
                         }, step=epoch+1)
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
 

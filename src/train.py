@@ -112,6 +112,7 @@ class TrainerEdge:
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        epoch_latency_sum = np.zeros(7)
         
         for batch in train_progress_bar:
             start_batch_time = time.time()
@@ -141,10 +142,10 @@ class TrainerEdge:
 
             server_grad_numpy = response['gradient']
             batch_loss = response['loss']
-            server_forward_time = response.get('server_forward_time')
-            server_backward_time = response.get('server_backward_time')
-            receive_inter_time = response.get('receive_inter_time')
-            send_grad_time = response.get('send_grad_time')
+            server_forward_time = response.get('server_forward_time', 0)
+            server_backward_time = response.get('server_backward_time', 0)
+            receive_inter_time = response.get('receive_inter_time', 0)
+            send_grad_time = response.get('send_grad_time', 0)
 
             self.optimizer.zero_grad()
 
@@ -167,12 +168,25 @@ class TrainerEdge:
                                         server_backward = server_backward_time,
                                         inter_delay = receive_inter_time - send_inter_time,
                                         grad_delay = received_grad_time - send_grad_time)
+            
+            current_batch_times = np.array([
+                latency,
+                send_inter_time - start_batch_time,
+                end_batch_time - received_grad_time,
+                server_forward_time,
+                server_backward_time,
+                receive_inter_time - send_inter_time,
+                received_grad_time - send_grad_time
+            ])
+
+            epoch_latency_sum += current_batch_times
             # running_loss += batch_loss
             # train_progress_bar.set_postfix({'server_loss': batch_loss})
         clear_memory(device = self.device, threshold=0.85)
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
-        return avg_train_loss
+        avg_latencies = epoch_latency_sum / len(self.train_loader)
+        return avg_train_loss, avg_latencies
 
     def validate_one_epoch(self, epoch):
         self.model.eval()
@@ -219,7 +233,7 @@ class TrainerEdge:
         self.comm.send_training_metadata('server_queue', self.client_id, nb_train)
 
         for epoch in range(self.num_epochs):
-            avg_train_loss = self.train_one_epoch(epoch)
+            avg_train_loss, latencies = self.train_one_epoch(epoch)
             print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
 
             # Save checkpoint
@@ -229,7 +243,7 @@ class TrainerEdge:
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
-            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = global_epoch)
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = global_epoch, latencies = latencies)
         
         print("Finished Training.")
         self.post_processing()
