@@ -17,6 +17,7 @@ from tqdm import tqdm
 import pickle
 import torch
 import torch.nn as nn
+import pandas as pd
 
 MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
@@ -51,13 +52,7 @@ class Server:
         self.cls_loss = []
         self.dfl_loss = []
 
-        self.batch_e2e = []
-        self.edge_forward = []
-        self.edge_backward = []
-        self.server_forward = []
-        self.server_backward = []
-        self.inter_delay = []
-        self.grad_delay = []
+        self.client_delays = []
         
         self.mlflow_connector = MLflowConnector(
             tracking_uri=MLFLOW_TRACKING_URI,
@@ -125,13 +120,18 @@ class Server:
                 client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
                 if layer_id == 1:
-                    self.batch_e2e.append(payload.get('batch_e2e'))
-                    self.edge_forward.append(payload.get('edge_forward'))
-                    self.edge_backward.append(payload.get('edge_backward'))
-                    self.server_forward.append(payload.get('server_forward'))
-                    self.server_backward.append(payload.get('server_backward'))
-                    self.inter_delay.append(payload.get('inter_delay'))
-                    self.grad_delay.append(payload.get('grad_delay'))
+                    log_entry = {
+                        'epoch': payload.get('epoch'),
+                        'client_id': payload.get('client_id'),
+                        'batch_e2e': payload.get('batch_e2e'),
+                        'edge_forward': payload.get('edge_forward'),
+                        'edge_backward': payload.get('edge_backward'),
+                        'server_forward': payload.get('server_forward'),
+                        'server_backward': payload.get('server_backward'),
+                        'inter_delay': payload.get('inter_delay'),
+                        'grad_delay': payload.get('grad_delay')
+                    }
+                    self.client_delays.append(log_entry)
                 elif layer_id == 2:
                     self.box_loss.append(payload.get('box_loss'))
                     self.cls_loss.append(payload.get('cls_loss'))
@@ -185,6 +185,8 @@ class Server:
 
                     avg_val_loss, val_loss_items, map50, map5095, mp, mr = self.validate_one_epoch(epoch)
 
+                    print("Delay tables: ", self.client_delays)
+                    avg_delays = self.get_epoch_averages(self.epoch - 1)
                     self.mlflow_connector.log_metrics({
                         "train/box_loss": self.box_loss[self.epoch - 1],
                         "train/cls_loss": self.cls_loss[self.epoch - 1],
@@ -196,13 +198,13 @@ class Server:
                         "metrics/recall": mr,
                         "metrics/mAP50": map50,
                         "metrics/mAP50-95": map5095,
-                        "latency/batch_e2e": self.batch_e2e[self.epoch - 1],
-                        "latency/edge_forward": self.edge_forward[self.epoch - 1],
-                        "latency/edge_backward": self.edge_backward[self.epoch - 1],
-                        "latency/server_forward": self.server_forward[self.epoch - 1],
-                        "latency/server_backward": self.server_backward[self.epoch - 1],
-                        "latency/inter_delay": self.inter_delay[self.epoch - 1],
-                        "latency/grad_delay": self.grad_delay[self.epoch - 1],
+                        "latency/batch_e2e": avg_delays.get("batch_e2e", 0),
+                        "latency/edge_forward": avg_delays.get("edge_forward", 0),
+                        "latency/edge_backward": avg_delays.get("edge_backward", 0),
+                        "latency/server_forward": avg_delays.get("server_forward", 0),
+                        "latency/server_backward": avg_delays.get("server_backward", 0),
+                        "latency/inter_delay": avg_delays.get("inter_delay", 0),
+                        "latency/grad_delay": avg_delays.get("grad_delay", 0),
                         }, step=epoch+1)
                     update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
 
@@ -422,3 +424,13 @@ class Server:
             correct[matches[:, 1].long()] = matches[:, 2:3] >= iou_v
             
         return correct
+    
+    def get_epoch_averages(self, epoch):
+        if not self.client_delays:
+            return {}
+
+        df = pd.DataFrame(self.client_delays)
+        epoch_summary = df[df['epoch'] == epoch].groupby('epoch').mean(numeric_only=True)
+        if not epoch_summary.empty:
+            return epoch_summary.iloc[0].to_dict()
+        return {}
