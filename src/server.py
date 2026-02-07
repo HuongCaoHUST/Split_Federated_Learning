@@ -11,6 +11,7 @@ from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils.loss import v8DetectionLoss
 from src.mlflow import MLflowConnector
+from src.monitoring import DeviceMonitor
 import numpy as np
 from tqdm import tqdm
 import pickle
@@ -54,7 +55,7 @@ class Server:
             tracking_uri=MLFLOW_TRACKING_URI,
             experiment_name=EXPERIMENT_NAME
         )
-        self.mlflow_connector.start_run(run_name="New Split Learning")
+        self.run_id = self.mlflow_connector.start_run(run_name="New Split Learning").info.run_id
 
         hyperparams = {
             "batch_size": self.batch_size,
@@ -72,6 +73,9 @@ class Server:
         self.comm.delete_old_queues(['intermediate_queue', 'gradient_queue'])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('server_queue')
+        self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
+        self.monitor.start()
+
         self.comm.consume_messages('server_queue', self.on_message)
 
     def on_message(self, ch, method, properties, body):

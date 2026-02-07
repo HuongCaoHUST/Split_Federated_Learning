@@ -15,7 +15,7 @@ from model.Mobilenet import MobileNet
 from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
-from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_10, YOLO11_SERVER_10, YOLO11_EDGE_20, YOLO11_SERVER_20
+from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_15, YOLO11_SERVER_15, YOLO11_EDGE_20, YOLO11_SERVER_20
 from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
