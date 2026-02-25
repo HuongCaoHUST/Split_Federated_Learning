@@ -1,78 +1,108 @@
+# Split Federated Learning for YOLOv11 Object Detection
 
-# CNN Image Classification on CIFAR-10
+This project implements a Split Federated Learning (SFL) system to train a YOLOv11 object detection model. The core idea is to split the neural network model into multiple parts, distributing them between edge clients and a central server. This allows for training on decentralized data without sharing the raw data itself, enhancing privacy and efficiency.
 
-This project trains Convolutional Neural Network (CNN) models for image classification using the CIFAR-10 dataset.
+## Architecture
+
+The system follows a client-server architecture orchestrated by a message broker.
+
+- **Server**: The central coordinator that manages the federated learning rounds. Its responsibilities include:
+  - Registering and managing clients.
+  - Aggregating (merging) model parts received from all clients.
+  - Performing validation on the reconstructed global model.
+  - Logging metrics to MLflow.
+  - Sending the updated global model back to the clients for the next round.
+
+- **Clients (Edge Devices)**: Each client holds a partition of the YOLOv11 model. There are two types of clients corresponding to the two main splits of the model. They perform the following tasks:
+  - Train their model partition on local data.
+  - Send the updated model part back to the server.
+  - Receive the new global model from the server.
+
+- **RabbitMQ**: Acts as the message bus for all asynchronous communication between the server and the clients.
+
+The training process is as follows:
+1. The server and all clients connect to the RabbitMQ service.
+2. Clients register themselves with the server.
+3. Once all clients are registered, the server initiates the first training round.
+4. Each client trains its part of the model and sends the updated weights to the server.
+5. The server waits for all client updates, merges them to form a new global model, and validates it.
+6. The server sends the new model back to the clients, starting the next round. This repeats for a configured number of rounds.
 
 ## Project Structure
 
 ```
 .
-├── config.yaml              # Configuration file for training parameters
-├── data/                    # Directory for dataset
-│   └── class_names          # Defines class names for prediction
-├── model/                   # Contains CNN model definitions
-│   ├── Alexnet.py
-│   └── Mobilenet.py
-├── src/                     # Source code
-│   ├── train.py             # Main training script
-│   └── predict.py           # Script for running predictions
-│   └── validation.py        # Script for model validation
+├── config.yaml              # Main configuration file (model split, training params)
+├── docker-compose.yml       # Docker Compose for services like RabbitMQ
+├── main.py                  # Main entry point to start server or clients
 ├── requirements.txt         # Python dependencies
-└── run_train.sh             # Shell script to execute training
+├── run_train.sh             # Example shell script to execute training
+├── model/                   # Model definitions (e.g., YOLO11n_custom.py)
+└── src/                     # Source code
+    ├── server.py            # Server logic
+    ├── client.py            # Client logic
+    ├── train.py             # Training loops for edge and server parts
+    ├── communication.py     # RabbitMQ communication handler
+    ├── dataset.py           # Dataset handling
+    ├── predict.py           # Script for running predictions
+    └── ...
 ```
 
 ## Setup
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
-    cd cnn_trainining
+    git clone https://github.com/HuongCaoHUSTSplit_Federated_Learning.git
+    cd Split_Federated_Learning
     ```
 
-2.  **Create a virtual environment (recommended):**
+2.  **Create a virtual environment and install dependencies:**
     ```bash
     python -m venv venv
     source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-
-3.  **Install the dependencies:**
-    ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Download the dataset:**
-    The training script will automatically download the CIFAR-10 dataset if it's not found in the `data` directory.
+3.  **Start RabbitMQ Service:**
+    This project is configured to connect to a RabbitMQ instance. You can easily start one using the provided Docker Compose file.
+    ```bash
+    docker-compose up -d rabbitmq
+    ```
 
-## Usage
+## How to Run
 
-To start the training process, run the following script:
+The training process requires one server instance and multiple client instances running concurrently in separate terminals. The number of clients should match the configuration in `config.yaml`.
 
-```bash
-bash run_train.sh
-```
+1.  **Terminal 1: Start the Server**
+    ```bash
+    python main.py --layer_id 0
+    ```
 
-This will execute the `src/train.py` script with the parameters defined in `config.yaml`. You can modify the `config.yaml` file to change the model, learning rate, batch size, number of epochs, etc.
+2.  **Terminal 2: Start Client Layer 1 1**
+    This client handles the first part of the model.
+    ```bash
+    python main.py --layer_id 1
+    ```
 
-## Prediction
+3.  **Terminal 3: Start Client Layer 2**
+    This client handles the second part of the model.
+    ```bash
+    python main.py --layer_id 2
+    ```
+    
+    *Note: If you configure more clients in `config.yaml`, you will need to open more terminals to run them.*
 
-You can use the `src/predict.py` script to perform predictions on single images or a directory of images. The class names for prediction are loaded from `data/class_names`.
+## Configuration
 
-**Arguments:**
-*   `--source`: Path to the input image file or a directory containing images.
-*   `--weights`: Path to the trained model weights file (`.pth`).
-*   `--config`: Path to the configuration file (`config.yaml`). (Default: `config.yaml`)
+The main behavior of the system is controlled by `config.yaml`.
 
-**Example 1: Predict on a single image**
+-   `clients`: A list defining the number of clients of each type. For example, `[1, 1]` means one client for part 1 and one for part 2.
+-   `training`: Parameters for the training process like `num_epochs`, `num_rounds`, `batch_size`, and `learning_rate`.
+-   `model`: Defines the model architecture.
+    -   `cut_layer`: The index of the layer where the model is split. This is a critical parameter for Split Learning.
+    -   `pretrained_path`: Path to a pretrained model to start from.
+-   `dataset`: Path to the dataset configuration YAML file(s).
+-   `rabbitmq`: Connection details for the RabbitMQ server.
 
-```bash
-python src/predict.py --source test_img.png --weights ./results/run_1/AlexNet_CIFAR10.pth --config config.yaml
-```
 
-**Example 2: Predict on a directory of images**
-
-Assuming you have a directory named `my_images` with several `.png` or `.jpg` files:
-
-```bash
-python src/predict.py --source data/my_images --weights ./results/run_1/AlexNet_CIFAR10.pth --config config.yaml
-```
-
+The trained models and validation results are saved in a `runs` directory created automatically.
