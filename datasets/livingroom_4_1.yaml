@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 path: ./livingroom_4_1
+=======
+path: ./datasets/livingroom_4_1
+>>>>>>> fed
 train: ./train/images
 val: ./valid/images
 nc: 20

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class VGG16_EDGE(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=10):
         super(VGG16_EDGE, self).__init__()
         # Block 1
         self.conv1_1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)

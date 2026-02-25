@@ -1,2 +1,1 @@
-# Go to container
 docker exec -it torch_cpu bash

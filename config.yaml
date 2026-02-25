@@ -1,21 +1,43 @@
+clients:
+  - 1
+  - 1
+
 training:
   num_epochs: 2
+<<<<<<< HEAD
+=======
+  num_rounds: 4
+>>>>>>> fed
   batch_size: 8
   learning_rate: 0.001
   optimizer: 'SGD' # Adam or SGD
   momentum: 0.9
+<<<<<<< HEAD
   num_workers: 2
 
 model:
   name: 'VGG16'
   save_path: 'cifar_net.pt'
+=======
+  num_workers: 0
+
+model:
+  edge: 'AlexNet_EDGE'
+  server: 'AlexNet_SERVER'
+  cut_layer: 10
+  save_path: 'cifar_net.pth'
+>>>>>>> fed
   save_model: true
   pretrained_path: './yolo11n.pt'
 
 dataset:
+<<<<<<< HEAD
   data: 'CIFAR10' # 'CIFAR10' or 'MNIST'
   validation_split: 0.1
   subset_fraction: 0.001
+=======
+  - datasets/livingroom_4_1.yaml
+>>>>>>> fed
 
 rabbitmq:
   host: 'rabbitmq'

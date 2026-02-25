@@ -1,14 +1,4 @@
-version: "3.8"
-
 services:
-  torch:
-    build: .
-    container_name: torch_cpu
-    volumes:
-      - ${PWD}:/workspace
-    tty: true
-    stdin_open: true
-
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -18,3 +8,92 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq_config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  server:
+    build: .
+    image: cnn_training:latest
+    container_name: server
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ${PWD}:/workspace
+    tty: true
+    stdin_open: true
+    command: ["python", "main.py", "--layer_id", "0"]
+    shm_size: '4gb'
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  torch_1:
+    image: cnn_training:latest
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    volumes:
+      - ${PWD}:/workspace
+    tty: true
+    stdin_open: true
+    command: ["python", "main.py", "--layer_id", "1"]
+    shm_size: '4gb'
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  torch_2:
+    image: cnn_training:latest
+    container_name: client_server
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    volumes:
+      - ${PWD}:/workspace
+    tty: true
+    stdin_open: true
+    command: ["python", "main.py", "--layer_id", "2"]
+    shm_size: '4gb'
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  rabbitmq_data:
+    driver: local

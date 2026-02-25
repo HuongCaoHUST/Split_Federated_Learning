@@ -37,6 +37,10 @@ class MLflowConnector:
         """
         self.run = mlflow.start_run(run_name=run_name)
         print(f"MLflow run '{run_name}' started (run_id: {self.run.info.run_id})")
+<<<<<<< HEAD
+=======
+        return self.run
+>>>>>>> fed
 
     def end_run(self):
         """
@@ -173,4 +177,8 @@ if __name__ == '__main__':
         # 5. End the run
         mlflow_connector.end_run()
 
+<<<<<<< HEAD
     print("\nExample finished successfully!")
+=======
+    print("\nExample finished successfully!")
+>>>>>>> fed

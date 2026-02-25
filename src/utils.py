@@ -5,8 +5,15 @@ from matplotlib.ticker import MaxNLocator
 import sys # Added for sys.exit
 import yaml
 import torch
+import psutil
+import gc
+import time
 
+<<<<<<< HEAD
 def update_results_csv(epoch, train_loss, val_loss, precision, recall, map50, map5095, save_dir):
+=======
+def update_results_csv(epoch, train_loss, val_loss=None, val_accuracy=None, save_dir = './results'):
+>>>>>>> fed
     """
     Appends the latest epoch results to a CSV file.
     Creates the file and writes the header on the first call.
@@ -93,21 +100,26 @@ def count_parameters(model):
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def create_run_dir(project_root):
+def create_run_dir(project_root, layer_id=None, client_id=None):
     """
     Creates a new directory for the current run to save results.
     """
     results_dir = os.path.join(project_root, 'results')
     os.makedirs(results_dir, exist_ok=True)
 
-    # Find the next available run directory
     run_idx = 1
-    while os.path.exists(os.path.join(results_dir, f'run_{run_idx}')):
+    while True:
+        if layer_id and client_id is not None:
+            run_name = f"run_{layer_id}_{client_id}"
+        elif layer_id is not None:
+            run_name = f"run_{layer_id}_{run_idx}"
+        else:
+            run_name = f"run_{run_idx}"
+        run_dir = os.path.join(results_dir, run_name)
+        if not os.path.exists(run_dir):
+            os.makedirs(run_dir)
+            break
         run_idx += 1
-    
-    run_dir = os.path.join(results_dir, f'run_{run_idx}')
-    os.makedirs(run_dir)
-    
     print(f"Created run directory: {run_dir}")
     return run_dir
 
@@ -122,13 +134,90 @@ def load_config_and_setup(config_path, project_root):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
-    dataset_name = config.get('dataset', {}).get('name', 'CIFAR10')
-    if dataset_name.upper() == 'MNIST':
-        class_names = [str(i) for i in range(10)]
-    else:
-        class_names_file_path = os.path.join(project_root, 'data', 'class_names.py')
-        class_names = _load_class_names_from_file(class_names_file_path)
-    
-    num_classes = len(class_names)
+    return config, device
 
-    return config, device, num_classes
+def get_memory(unit='fraction'):
+        """
+        unit: fraction, gb, bytes
+        """
+        cgroup_v1_current = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+        cgroup_v1_max = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+
+        try:
+            limit = None
+            usage = None
+
+            if os.path.exists(cgroup_v1_current):
+                with open(cgroup_v1_current, "r") as f:
+                    usage = int(f.read().strip())
+            
+            if os.path.exists(cgroup_v1_max):
+                with open(cgroup_v1_max, "r") as f:
+                    limit = int(f.read().strip())
+
+            if usage is not None:
+                if limit is None or limit > 10**15: 
+                    limit = psutil.virtual_memory().total
+                
+                if unit == 'fraction':
+                    return usage / limit
+                elif unit == 'gb':
+                    return usage / (1024**3)
+                else:
+                    return usage 
+
+        except Exception as e:
+            print(f"Warning reading cgroup: {e}") 
+            pass
+
+        mem = psutil.virtual_memory()
+        if unit == 'fraction':
+            return mem.percent / 100.0
+        elif unit == 'gb':
+            return mem.used / (1024**3)
+        return mem.used
+
+def clear_memory(device, threshold: float = 0.85):
+        if threshold:
+            assert 0 <= threshold <= 1, "Threshold must be between 0 and 1."
+            if get_memory(unit='fraction') <= threshold:
+                return
+
+        gc.collect()
+        
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+
+class BatchLogger:
+    def __init__(self, client_id, filename="batch_latency.csv"):
+        self.client_id = client_id
+        self.filename = filename
+        self.header = ['client_id', 'epoch', 'batch_index', 'latency_seconds', 'payload_size_mb', 'edge_forward', 'edge_backward', 'server_forward', 'server_backward', 'inter_delay', 'grad_delay']
+        self.global_batch_idx = 1
+        
+        if not os.path.exists(self.filename):
+            with open(self.filename, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(self.header)
+
+    def log_batch(self, epoch, latency, data_bytes, edge_forward, edge_backward, server_forward, server_backward, inter_delay, grad_delay):
+        size_mb = 2* (len(data_bytes) / (1024 * 1024))
+        with open(self.filename, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                self.client_id,
+                epoch, 
+                self.global_batch_idx, 
+                f"{latency:.4f}", 
+                f"{size_mb:.4f}",
+                f"{edge_forward:.4f}", 
+                f"{edge_backward:.4f}",
+                f"{server_forward:.4f}",
+                f"{server_backward:.4f}",
+                f"{inter_delay:.4f}",
+                f"{grad_delay:.4f}"
+            ])
+            f.flush()
+        self.global_batch_idx += 1

@@ -1,3 +1,4 @@
+import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,12 +9,15 @@ from copy import deepcopy
 from datetime import datetime
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
+import time
 from model.Alexnet import AlexNet
+from model.Alexnet_EDGE import AlexNet_EDGE
+from model.Alexnet_SERVER import AlexNet_SERVER
 from model.Mobilenet import MobileNet
 from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
+<<<<<<< HEAD
 from model.YOLO11 import YOLO11_Full
 from src.utils import update_results_csv, save_plots, count_parameters, create_run_dir
 from src.dataset import Dataset
@@ -32,30 +36,57 @@ from ultralytics.utils.ops import xywh2xyxy
 
 MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
 EXPERIMENT_NAME = "Split_Learning"
+=======
+from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_15, YOLO11_SERVER_15, YOLO11_EDGE_20, YOLO11_SERVER_20
+from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
+from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.cfg import get_cfg
+from ultralytics.utils import DEFAULT_CFG
+from ultralytics.data.dataset import YOLODataset
+from ultralytics.data.utils import check_det_dataset
+import numpy as np
+from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
+from ultralytics.utils.metrics import ap_per_class
+>>>>>>> fed
 
-class Trainer:
-    def __init__(self, config, device, num_classes, project_root):
+MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
+EXPERIMENT_NAME = "Split_Learning"
+
+class TrainerEdge:
+    def __init__(self, config, device, project_root, comm, run_dir, layer_id, client_id, datasets, global_model_path = None, round = 0):
         self.config = config
         self.device = device
-        self.num_classes = num_classes
         self.project_root = project_root
+        self.comm = comm
+        self.layer_id = layer_id
+        self.client_id = client_id
+        self.datasets = datasets
+        self.global_model_path = global_model_path
+        self.round = round
         
         # Set Hyperparameters
-        self.run_dir = create_run_dir(project_root)
+        self.run_dir = run_dir
         self.batch_size = config['training']['batch_size']
+<<<<<<< HEAD
         self.num_workers = config['training'].get('num_workers', 2)
+=======
+        self.num_workers = config['training'].get('num_workers', 0)
+>>>>>>> fed
         self.num_epochs = config['training']['num_epochs']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
-        self.model_name = config['model']['name']
+        self.model_name = config['model']['edge']
+        self.cut_layer = config['model']['cut_layer']
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
         self.pretrained_path = config['model'].get('pretrained_path')
 
-        # Initialize RabbitMQ connection
-        self.comm = Communication(config)
+        # Create gradient queue
+        self.gradient_queue_name = f'gradient_queue_{client_id}'
+        self.comm.create_queue(self.gradient_queue_name)
 
+<<<<<<< HEAD
         self.data_cfg = check_det_dataset("./datasets/livingroom_4_1.yaml")
         self.num_classes = self.data_cfg['nc']
 
@@ -70,6 +101,35 @@ class Trainer:
         # Init Loss and Optimizer
         self.criterion = v8DetectionLoss(self.model)
 
+=======
+        # Initialize batch logger
+        self.batch_logger = BatchLogger(self.client_id, "training_log.csv")
+
+        # Initialize model
+        self.data_cfg = check_det_dataset(self.datasets)
+        self.num_classes = self.data_cfg['nc']
+
+        MODEL_MAP = {
+            5: YOLO11_EDGE_5,
+            10: YOLO11_EDGE,
+            15: YOLO11_EDGE_15,
+            20: YOLO11_EDGE_20
+        }
+
+        model_class = MODEL_MAP.get(self.cut_layer)
+
+        if self.global_model_path is not None:
+            print("Continue Training with global model: ", self.global_model_path)
+            self.model = model_class(pretrained = self.global_model_path).to(self.device)
+        else:
+            self.model = model_class(pretrained = 'yolo11n.pt').to(self.device)
+
+        self.model.names = self.data_cfg['names']
+        self.yolo_args = get_cfg(DEFAULT_CFG)
+        self.model.args = self.yolo_args
+
+        # Init Optimizer
+>>>>>>> fed
         if self.optimizer_name.lower() == 'sgd':
             self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.937, weight_decay=0.0005)
         elif self.optimizer_name.lower() == 'adam':
@@ -78,8 +138,13 @@ class Trainer:
              self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=0.0005)
         else:
             raise ValueError(f"Optimizer {self.optimizer_name} not supported.")
+<<<<<<< HEAD
         
         # 3. Initialize Dataset and DataLoader
+=======
+
+        # Initialize Dataset and DataLoader
+>>>>>>> fed
         self.train_dataset = YOLODataset(
             img_path=self.data_cfg["train"],
             imgsz=640,
@@ -97,6 +162,7 @@ class Trainer:
             num_workers=self.num_workers,
             collate_fn=self.train_dataset.collate_fn
         )
+<<<<<<< HEAD
 
         self.val_dataset = YOLODataset(
             img_path=self.data_cfg["val"],
@@ -114,6 +180,8 @@ class Trainer:
             num_workers=self.num_workers,
             collate_fn=self.val_dataset.collate_fn
         )
+=======
+>>>>>>> fed
 
         # History tracking
         self.history_train_loss = []
@@ -136,31 +204,14 @@ class Trainer:
         }
         self.mlflow_connector.log_params(hyperparams)
 
-    def _init_model(self):
-        print(f"Initializing model: {self.model_name}...")
-        model_map = {
-            'AlexNet': AlexNet,
-            'MobileNet': MobileNet,
-            'VGG16': VGG16,
-            'VGG16_EDGE': VGG16_EDGE,
-            'VGG16_SERVER': VGG16_SERVER
-        }
-
-        if self.model_name not in model_map:
-            print(f"Error: Model '{self.model_name}' not recognized. Supported models: {list(model_map.keys())}")
-            sys.exit(1)
-        
-        model = model_map[self.model_name](num_classes=self.num_classes).to(self.device)
-        print(f"Model Parameters: {count_parameters(model):,}")
-        print("Model initialized.")
-        return model
-
     def train_one_epoch(self, epoch):
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        epoch_latency_sum = np.zeros(7)
         
         for batch in train_progress_bar:
+<<<<<<< HEAD
             images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
 
             outputs = self.model(images)
@@ -182,10 +233,263 @@ class Trainer:
                 cls_loss=f'{loss_items[1].item():.4f}',
                 dfl_loss=f'{loss_items[2].item():.4f}'
             )
+=======
+            start_batch_time = time.time()
+            images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
+            outputs = self.model(images)
+            print("Outputs shapes: ", [o.shape for o in outputs])
+ 
+            label_data = {
+                "batch_idx": batch["batch_idx"].cpu(),
+                "bboxes":    batch["bboxes"].cpu(),
+                "cls":       batch["cls"].cpu()
+            }
+            payload = {
+                'client_output': [x.detach().cpu().numpy() for x in outputs],
+                'label_data': label_data,
+                'reply_to': self.gradient_queue_name
+            }
 
+            data_bytes = pickle.dumps(payload)
+            self.comm.publish_message(queue_name='intermediate_queue', message=data_bytes)
+            send_inter_time = time.time()
+
+            response_body = self.comm.consume_message_sync(self.gradient_queue_name)
+            received_grad_time = time.time()
+            response = pickle.loads(response_body)
+            print("Received response keys: ", response.keys())
+
+            server_grad_numpy = response['gradient']
+            batch_loss = response['loss']
+            server_forward_time = response.get('server_forward_time', 0)
+            server_backward_time = response.get('server_backward_time', 0)
+            receive_inter_time = response.get('receive_inter_time', 0)
+            send_grad_time = response.get('send_grad_time', 0)
+
+            self.optimizer.zero_grad()
+>>>>>>> fed
+
+            grad_tensors = []
+            for g in server_grad_numpy:
+                if isinstance(g, torch.Tensor):
+                    grad_tensors.append(g.to(self.device))
+                else:
+                    grad_tensors.append(torch.from_numpy(g).to(self.device))
+
+            torch.autograd.backward(outputs, grad_tensors)
+            self.optimizer.step()
+
+            end_batch_time = time.time()
+            latency = end_batch_time - start_batch_time
+            self.batch_logger.log_batch(epoch + 1, latency, data_bytes, 
+                                        edge_forward = send_inter_time - start_batch_time,
+                                        edge_backward = end_batch_time - received_grad_time,
+                                        server_forward = server_forward_time,
+                                        server_backward = server_backward_time,
+                                        inter_delay = receive_inter_time - send_inter_time,
+                                        grad_delay = received_grad_time - send_grad_time)
+            
+            current_batch_times = np.array([
+                latency,
+                send_inter_time - start_batch_time,
+                end_batch_time - received_grad_time,
+                server_forward_time,
+                server_backward_time,
+                receive_inter_time - send_inter_time,
+                received_grad_time - send_grad_time
+            ])
+
+            epoch_latency_sum += current_batch_times
+            # running_loss += batch_loss
+            # train_progress_bar.set_postfix({'server_loss': batch_loss})
+        clear_memory(device = self.device, threshold=0.85)
         avg_train_loss = running_loss / len(self.train_loader)
+<<<<<<< HEAD
         return avg_train_loss, loss_items
     
+=======
+        self.history_train_loss.append(avg_train_loss)
+        avg_latencies = epoch_latency_sum / len(self.train_loader)
+        return avg_train_loss, avg_latencies
+
+    def validate_one_epoch(self, epoch):
+        self.model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            val_progress_bar = tqdm(self.validation_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Val]")
+            for images, labels in val_progress_bar:
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                outputs = self.model(images)
+                loss = self.criterion(outputs, labels)
+                val_loss += loss.item()
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+
+        avg_val_loss = val_loss / len(self.validation_loader)
+        val_accuracy = 100 * correct / total
+        
+        self.history_val_loss.append(avg_val_loss)
+        self.history_val_accuracy.append(val_accuracy)
+        
+        return avg_val_loss, val_accuracy
+    
+    def post_processing(self):
+        # Save model
+        if self.save_model_enabled:
+            save_path = os.path.join(self.run_dir, 'cifar_net_edge.pt')
+            torch.save(self.model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
+            # self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
+        else:
+            print("Model saving skipped as per configuration.")
+
+        print("Plots saved.")
+    
+    def run(self):
+        print("Starting Training...")
+
+        nb_train = len(self.train_loader)
+        self.comm.send_training_metadata('server_queue', self.client_id, nb_train)
+
+        for epoch in range(self.num_epochs):
+            avg_train_loss, latencies = self.train_one_epoch(epoch)
+            print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
+
+            # Save checkpoint
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
+            else: global_epoch = epoch
+
+            save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
+            torch.save(self.model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = global_epoch, latencies = latencies)
+        
+        print("Finished Training.")
+        self.post_processing()
+
+class TrainerServer:
+    def __init__(self, config, device, project_root, comm, run_dir, layer_id, client_id, nb, nc, class_names, global_model_path = None, round = None):
+        self.config = config
+        self.device = device
+        self.project_root = project_root
+        self.comm = comm
+        self.layer_id = layer_id
+        self.client_id = client_id
+        self.nb = nb
+        self.nc = nc
+        self.class_names = class_names
+        self.global_model_path = global_model_path
+        self.round = round
+        
+        # Set Hyperparameters
+        self.run_dir = run_dir
+        self.batch_size = config['training']['batch_size']
+        self.num_workers = config['training'].get('num_workers', 0)
+        self.num_epochs = config['training']['num_epochs']
+        self.learning_rate = config['training']['learning_rate']
+        self.optimizer_name = config['training'].get('optimizer', 'Adam')
+        self.momentum = config['training'].get('momentum', 0.9)
+        self.model_name = config['model']['server']
+        self.cut_layer = config['model']['cut_layer']
+        self.model_save_path = config['model']['save_path']
+        self.save_model_enabled = config['model'].get('save_model', True)
+
+        MODEL_MAP = {
+            5: YOLO11_SERVER_5,
+            10: YOLO11_SERVER,
+            15: YOLO11_SERVER_15,
+            20: YOLO11_SERVER_20
+        }
+
+        model_class = MODEL_MAP.get(self.cut_layer)
+
+        # Initialize model
+        if self.global_model_path is not None:
+            print("Continue Training with global model: ", self.global_model_path)
+            self.model = model_class(pretrained = self.global_model_path, nc = self.nc).to(self.device)
+        else:
+            self.model = model_class(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+            
+        self.model.names = self.class_names
+        self.yolo_args = get_cfg(DEFAULT_CFG)
+        self.model.args = self.yolo_args
+        
+        # Init Loss and Optimizer
+        self.criterion = v8DetectionLoss(self.model)
+        if self.optimizer_name.lower() == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.937, weight_decay=0.0005)
+        elif self.optimizer_name.lower() == 'adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        elif self.optimizer_name.lower() == 'adamw':
+             self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=0.0005)
+        else:
+            raise ValueError(f"Optimizer {self.optimizer_name} not supported.")
+
+        # History tracking
+        self.history_train_loss = []
+        self.history_val_loss = []
+        self.history_val_accuracy = []
+
+    def train_one_epoch(self, epoch):
+        self.model.train()
+        running_loss = 0.0
+        train_progress_bar = tqdm(range(self.nb), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
+        
+        for i in train_progress_bar:
+            body = self.comm.consume_message_sync('intermediate_queue')
+            receive_inter_time = time.time()
+            payload = pickle.loads(body)
+            client_data_numpy = payload['client_output']
+            label_data = payload['label_data']
+            gradient_queue = payload['reply_to']
+
+            client_tensors = []
+            for client_np in client_data_numpy:
+                t = torch.tensor(
+                    client_np, 
+                    dtype=torch.float32, 
+                    device=self.device,
+                    requires_grad=True
+                )
+                client_tensors.append(t)
+
+            outputs = self.model(client_tensors)
+            end_server_forward_time = time.time()
+            loss, loss_items = self.criterion(outputs, label_data)
+            self.optimizer.zero_grad()
+
+            total_loss = loss.sum()
+            total_loss.backward()
+            self.optimizer.step()
+            end_server_backward_time = time.time()
+
+            grads_to_send = [t.grad.cpu() for t in client_tensors]
+            response = {
+                'gradient': grads_to_send,
+                'loss': loss_items,
+                'server_forward_time': end_server_forward_time - receive_inter_time,
+                'server_backward_time': end_server_backward_time - end_server_forward_time,
+                'receive_inter_time': receive_inter_time,
+                'send_grad_time': end_server_backward_time
+            }
+            self.comm.publish_message(gradient_queue, pickle.dumps(response))
+
+            train_progress_bar.set_postfix(
+                total_loss=f'{total_loss.item():.4f}',
+                box_loss=f'{loss_items[0].item():.4f}',
+                cls_loss=f'{loss_items[1].item():.4f}',
+                dfl_loss=f'{loss_items[2].item():.4f}'
+            )
+
+            running_loss += total_loss.item()
+        return running_loss / len(train_progress_bar), loss_items
+
+>>>>>>> fed
     def validate_one_epoch(self, epoch):
         self.model.eval()
         running_loss = 0.0
@@ -285,6 +589,7 @@ class Trainer:
     def post_processing(self, epoch):
         # Save checkpoint
         if self.save_model_enabled:
+<<<<<<< HEAD
             save_path = os.path.join(self.run_dir, self.model_save_path)
             model_to_save = deepcopy(self.model).cpu()
             if hasattr(self, 'config'):
@@ -293,6 +598,14 @@ class Trainer:
                 model_to_save.names = self.model.names
             elif hasattr(self, 'classes'):
                 model_to_save.names = self.classes
+=======
+            save_path = os.path.join(self.run_dir, 'cifar_net_server.pt')
+            torch.save(self.model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
+            # self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, epoch = 'last')
+        else:
+            print("Model saving skipped as per configuration.")
+>>>>>>> fed
 
             checkpoint = {
                 'epoch': epoch,
@@ -310,6 +623,7 @@ class Trainer:
 
     def run(self):
         print("Starting Training...")
+<<<<<<< HEAD
         final_epoch = 0
         for epoch in range(self.num_epochs):
             final_epoch = epoch
@@ -347,3 +661,27 @@ class Trainer:
 def train(config, device, num_classes, project_root):
     trainer = Trainer(config, device, num_classes, project_root)
     trainer.run()
+=======
+
+        for epoch in range(self.num_epochs):
+            avg_train_loss, loss_items = self.train_one_epoch(epoch)
+
+            # avg_val_loss, val_accuracy = self.validate_one_epoch(epoch)
+
+            # Save checkpoint
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
+            else: global_epoch = epoch
+
+            save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
+            torch.save(self.model.state_dict(), save_path)
+            print(f"Model saved to {save_path}")
+            self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id,
+                                    epoch = global_epoch, loss_items = loss_items)
+            
+            # Log to CSV
+            update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)
+        
+        print("Finished Training.")
+        self.post_processing()
+        # self.comm.close()
+>>>>>>> fed
