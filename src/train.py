@@ -2,32 +2,79 @@ import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import sys
 import os
-import json
-from torch.utils.data import DataLoader
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import time
-from model.Alexnet import AlexNet
 from model.Alexnet_EDGE import AlexNet_EDGE
 from model.Alexnet_SERVER import AlexNet_SERVER
-from model.Mobilenet import MobileNet
-from model.VGG16 import VGG16
-from model.VGG16_EDGE import VGG16_EDGE
-from model.VGG16_SERVER import VGG16_SERVER
-from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_15, YOLO11_SERVER_15, YOLO11_EDGE_20, YOLO11_SERVER_20
-from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
-from ultralytics.utils.loss import v8DetectionLoss
-from ultralytics.cfg import get_cfg
-from ultralytics.utils import DEFAULT_CFG
-from ultralytics.data.dataset import YOLODataset
-from ultralytics.data.utils import check_det_dataset
+from src.utils import BatchLogger, update_results_csv, save_plots, clear_memory
 import numpy as np
-from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
-from ultralytics.utils.metrics import ap_per_class
 
-MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
+MLFLOW_TRACKING_URI = "http://smart-hvac.io.vn:5005/"
 EXPERIMENT_NAME = "Split_Learning"
+
+
+def _load_checkpoint(model, checkpoint_path, device):
+    """Load an AlexNet split checkpoint saved by this project."""
+    state = torch.load(checkpoint_path, map_location=device)
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+    model.load_state_dict(state)
+
+
+def _classification_dataset(config, project_root, dataset_name=None):
+    """Create the classification dataset expected by AlexNet."""
+    dataset_config = config.get("dataset", {})
+    if isinstance(dataset_config, dict):
+        name = dataset_config.get("data", dataset_config.get("name", dataset_name or "CIFAR10"))
+    elif isinstance(dataset_name, str) and not dataset_name.endswith((".yaml", ".yml")):
+        name = dataset_name
+    else:
+        raise ValueError(
+            "AlexNet performs image classification. Set config['dataset'] to a mapping, "
+            "for example: {data: CIFAR10}; a YOLO detection YAML is not compatible."
+        )
+
+    transform_steps = [transforms.Resize((227, 227))]
+    if str(name).upper() == "MNIST":
+        transform_steps.extend([
+            transforms.Grayscale(num_output_channels=3),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+        dataset_class = torchvision.datasets.MNIST
+    elif str(name).upper() == "CIFAR10":
+        transform_steps.extend([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+        dataset_class = torchvision.datasets.CIFAR10
+    else:
+        raise ValueError(f"Unsupported AlexNet classification dataset: {name}")
+
+    dataset = dataset_class(
+        root=os.path.join(project_root, "data"),
+        train=True,
+        download=True,
+        transform=transforms.Compose(transform_steps),
+    )
+    class_names = dataset.classes
+    subset_fraction = float(dataset_config.get("subset_fraction", 1.0))
+    if not 0 < subset_fraction <= 1:
+        raise ValueError("dataset.subset_fraction must be in the range (0, 1].")
+    if subset_fraction < 1.0:
+        subset_size = max(1, int(len(dataset) * subset_fraction))
+        generator = torch.Generator().manual_seed(42)
+        indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+        dataset = Subset(dataset, indices)
+        print(
+            f"Using {subset_size} samples ({subset_fraction * 100:.2f}% of {name}).",
+            flush=True,
+        )
+    return dataset, len(class_names), class_names
 
 class TrainerEdge:
     def __init__(self, config, device, project_root, comm, run_dir, layer_id, client_id, datasets, global_model_path = None, round = 0):
@@ -46,6 +93,7 @@ class TrainerEdge:
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
+        self.log_interval = config['training'].get('log_interval', 10)
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
@@ -62,32 +110,18 @@ class TrainerEdge:
         # Initialize batch logger
         self.batch_logger = BatchLogger(self.client_id, "training_log.csv")
 
-        # Initialize model
-        self.data_cfg = check_det_dataset(self.datasets)
-        self.num_classes = self.data_cfg['nc']
-
-        MODEL_MAP = {
-            5: YOLO11_EDGE_5,
-            10: YOLO11_EDGE,
-            15: YOLO11_EDGE_15,
-            20: YOLO11_EDGE_20
-        }
-
-        model_class = MODEL_MAP.get(self.cut_layer)
-
+        # AlexNet is split after its convolutional feature extractor.
+        self.train_dataset, self.num_classes, self.class_names = _classification_dataset(
+            config, project_root, datasets
+        )
+        self.model = AlexNet_EDGE(num_classes=self.num_classes).to(self.device)
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
-            self.model = model_class(pretrained = self.global_model_path).to(self.device)
-        else:
-            self.model = model_class(pretrained = 'yolo11n.pt').to(self.device)
-
-        self.model.names = self.data_cfg['names']
-        self.yolo_args = get_cfg(DEFAULT_CFG)
-        self.model.args = self.yolo_args
+            _load_checkpoint(self.model, self.global_model_path, self.device)
 
         # Init Optimizer
         if self.optimizer_name.lower() == 'sgd':
-            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.937, weight_decay=0.0005)
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=self.momentum, weight_decay=0.0005)
         elif self.optimizer_name.lower() == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         elif self.optimizer_name.lower() == 'adamw':
@@ -95,23 +129,12 @@ class TrainerEdge:
         else:
             raise ValueError(f"Optimizer {self.optimizer_name} not supported.")
 
-        # Initialize Dataset and DataLoader
-        self.train_dataset = YOLODataset(
-            img_path=self.data_cfg["train"],
-            imgsz=640,
-            data=self.data_cfg,
-            augment=True,
-            hyp=self.yolo_args,
-            rect=False,
-            stride=32
-        )
-
         self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=self.train_dataset.collate_fn
+            pin_memory=self.device.type == "cuda"
         )
 
         # History tracking
@@ -125,20 +148,13 @@ class TrainerEdge:
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         epoch_latency_sum = np.zeros(7)
         
-        for batch in train_progress_bar:
+        for batch_idx, (images, labels) in enumerate(train_progress_bar, start=1):
             start_batch_time = time.time()
-            images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
+            images = images.to(self.device, non_blocking=True)
             outputs = self.model(images)
-            print("Outputs shapes: ", [o.shape for o in outputs])
- 
-            label_data = {
-                "batch_idx": batch["batch_idx"].cpu(),
-                "bboxes":    batch["bboxes"].cpu(),
-                "cls":       batch["cls"].cpu()
-            }
             payload = {
-                'client_output': [x.detach().cpu().numpy() for x in outputs],
-                'label_data': label_data,
+                'client_output': outputs.detach().cpu().numpy(),
+                'labels': labels.cpu().numpy(),
                 'reply_to': self.gradient_queue_name
             }
 
@@ -149,8 +165,6 @@ class TrainerEdge:
             response_body = self.comm.consume_message_sync(self.gradient_queue_name)
             received_grad_time = time.time()
             response = pickle.loads(response_body)
-            print("Received response keys: ", response.keys())
-
             server_grad_numpy = response['gradient']
             batch_loss = response['loss']
             server_forward_time = response.get('server_forward_time', 0)
@@ -160,14 +174,8 @@ class TrainerEdge:
 
             self.optimizer.zero_grad()
 
-            grad_tensors = []
-            for g in server_grad_numpy:
-                if isinstance(g, torch.Tensor):
-                    grad_tensors.append(g.to(self.device))
-                else:
-                    grad_tensors.append(torch.from_numpy(g).to(self.device))
-
-            torch.autograd.backward(outputs, grad_tensors)
+            server_grad = torch.as_tensor(server_grad_numpy, device=self.device)
+            outputs.backward(server_grad)
             self.optimizer.step()
 
             end_batch_time = time.time()
@@ -191,8 +199,15 @@ class TrainerEdge:
             ])
 
             epoch_latency_sum += current_batch_times
-            # running_loss += batch_loss
-            # train_progress_bar.set_postfix({'server_loss': batch_loss})
+            running_loss += float(batch_loss)
+            train_progress_bar.set_postfix(server_loss=f'{float(batch_loss):.4f}')
+            if batch_idx == 1 or batch_idx % self.log_interval == 0:
+                print(
+                    f"[AlexNet][Edge][Epoch {epoch + 1}/{self.num_epochs}] "
+                    f"Batch {batch_idx}/{len(self.train_loader)} - "
+                    f"loss={float(batch_loss):.4f} - avg_loss={running_loss / batch_idx:.4f}",
+                    flush=True,
+                )
         clear_memory(device = self.device, threshold=0.85)
         avg_train_loss = running_loss / len(self.train_loader)
         self.history_train_loss.append(avg_train_loss)
@@ -251,7 +266,7 @@ class TrainerEdge:
             if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
             else: global_epoch = epoch
 
-            save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
+            save_path = os.path.join(self.run_dir, f'cifar_net_edge_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
             self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id, epoch = global_epoch, latencies = latencies)
@@ -278,6 +293,7 @@ class TrainerServer:
         self.batch_size = config['training']['batch_size']
         self.num_workers = config['training'].get('num_workers', 0)
         self.num_epochs = config['training']['num_epochs']
+        self.log_interval = config['training'].get('log_interval', 10)
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
@@ -286,30 +302,16 @@ class TrainerServer:
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
 
-        MODEL_MAP = {
-            5: YOLO11_SERVER_5,
-            10: YOLO11_SERVER,
-            15: YOLO11_SERVER_15,
-            20: YOLO11_SERVER_20
-        }
-
-        model_class = MODEL_MAP.get(self.cut_layer)
-
         # Initialize model
+        self.model = AlexNet_SERVER(num_classes=self.nc).to(self.device)
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
-            self.model = model_class(pretrained = self.global_model_path, nc = self.nc).to(self.device)
-        else:
-            self.model = model_class(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
-            
-        self.model.names = self.class_names
-        self.yolo_args = get_cfg(DEFAULT_CFG)
-        self.model.args = self.yolo_args
+            _load_checkpoint(self.model, self.global_model_path, self.device)
         
         # Init Loss and Optimizer
-        self.criterion = v8DetectionLoss(self.model)
+        self.criterion = nn.CrossEntropyLoss()
         if self.optimizer_name.lower() == 'sgd':
-            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.937, weight_decay=0.0005)
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=self.momentum, weight_decay=0.0005)
         elif self.optimizer_name.lower() == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         elif self.optimizer_name.lower() == 'adamw':
@@ -332,33 +334,24 @@ class TrainerServer:
             receive_inter_time = time.time()
             payload = pickle.loads(body)
             client_data_numpy = payload['client_output']
-            label_data = payload['label_data']
+            labels = torch.as_tensor(payload['labels'], dtype=torch.long, device=self.device)
             gradient_queue = payload['reply_to']
 
-            client_tensors = []
-            for client_np in client_data_numpy:
-                t = torch.tensor(
-                    client_np, 
-                    dtype=torch.float32, 
-                    device=self.device,
-                    requires_grad=True
-                )
-                client_tensors.append(t)
-
-            outputs = self.model(client_tensors)
+            client_tensor = torch.tensor(
+                client_data_numpy, dtype=torch.float32, device=self.device, requires_grad=True
+            )
+            outputs = self.model(client_tensor)
             end_server_forward_time = time.time()
-            loss, loss_items = self.criterion(outputs, label_data)
+            loss = self.criterion(outputs, labels)
             self.optimizer.zero_grad()
 
-            total_loss = loss.sum()
-            total_loss.backward()
+            loss.backward()
             self.optimizer.step()
             end_server_backward_time = time.time()
 
-            grads_to_send = [t.grad.cpu() for t in client_tensors]
             response = {
-                'gradient': grads_to_send,
-                'loss': loss_items,
+                'gradient': client_tensor.grad.detach().cpu().numpy(),
+                'loss': loss.item(),
                 'server_forward_time': end_server_forward_time - receive_inter_time,
                 'server_backward_time': end_server_backward_time - end_server_forward_time,
                 'receive_inter_time': receive_inter_time,
@@ -366,15 +359,18 @@ class TrainerServer:
             }
             self.comm.publish_message(gradient_queue, pickle.dumps(response))
 
-            train_progress_bar.set_postfix(
-                total_loss=f'{total_loss.item():.4f}',
-                box_loss=f'{loss_items[0].item():.4f}',
-                cls_loss=f'{loss_items[1].item():.4f}',
-                dfl_loss=f'{loss_items[2].item():.4f}'
-            )
+            train_progress_bar.set_postfix(loss=f'{loss.item():.4f}')
 
-            running_loss += total_loss.item()
-        return running_loss / len(train_progress_bar), loss_items
+            running_loss += loss.item()
+            batch_idx = i + 1
+            if batch_idx == 1 or batch_idx % self.log_interval == 0:
+                print(
+                    f"[AlexNet][Server][Epoch {epoch + 1}/{self.num_epochs}] "
+                    f"Batch {batch_idx}/{self.nb} - loss={loss.item():.4f} - "
+                    f"avg_loss={running_loss / batch_idx:.4f}",
+                    flush=True,
+                )
+        return running_loss / self.nb
 
     def validate_one_epoch(self, epoch):
         self.model.eval()
@@ -420,7 +416,7 @@ class TrainerServer:
         print("Starting Training...")
 
         for epoch in range(self.num_epochs):
-            avg_train_loss, loss_items = self.train_one_epoch(epoch)
+            avg_train_loss = self.train_one_epoch(epoch)
 
             # avg_val_loss, val_accuracy = self.validate_one_epoch(epoch)
 
@@ -432,7 +428,7 @@ class TrainerServer:
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
             self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id,
-                                    epoch = global_epoch, loss_items = loss_items)
+                                    epoch = global_epoch, train_loss=avg_train_loss)
             
             # Log to CSV
             update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)

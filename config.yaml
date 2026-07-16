@@ -10,6 +10,7 @@ training:
   optimizer: 'SGD' # Adam or SGD
   momentum: 0.9
   num_workers: 0
+  log_interval: 10
 
 model:
   edge: 'AlexNet_EDGE'
@@ -17,13 +18,18 @@ model:
   cut_layer: 10
   save_path: 'cifar_net.pth'
   save_model: true
-  pretrained_path: './yolo11n.pt'
+  # pretrained_path: './yolo11n.pt'
 
 dataset:
-  - datasets/livingroom_4_1.yaml
+  data: CIFAR10
+  validation_split: 0.1
+  subset_fraction: 0.01
 
 rabbitmq:
   host: 'rabbitmq'
   port: 5672
   username: 'guest'
   password: 'guest'
+
+monitoring:
+  enabled: false

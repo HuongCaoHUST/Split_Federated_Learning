@@ -144,9 +144,15 @@ class Communication:
             payload = {
                 'action': 'start'
             }
-            if datasets is not None and i < len(datasets):
-                dataset = datasets[i]
-                if dataset is not None: payload['datasets'] = dataset
+            if datasets is not None:
+                # Classification uses one shared dataset configuration mapping;
+                # detection previously supplied one YAML path per client.
+                if isinstance(datasets, dict):
+                    payload['datasets'] = datasets
+                elif i < len(datasets):
+                    dataset = datasets[i]
+                    if dataset is not None:
+                        payload['datasets'] = dataset
             if nb is not None and nc is not None:
                 payload['nb'] = nb
                 payload['nc'] = nc
@@ -166,7 +172,8 @@ class Communication:
         }
         self.publish_message(queue_name, pickle.dumps(payload))
 
-    def publish_model(self, queue_name, model_path, layer_id = None, client_id = None, epoch = None, loss_items = None, latencies = None):
+    def publish_model(self, queue_name, model_path, layer_id=None, client_id=None,
+                      epoch=None, loss_items=None, latencies=None, train_loss=None):
 
         try:
             if not os.path.exists(model_path):
@@ -188,6 +195,9 @@ class Communication:
                     payload['box_loss'] = loss_items[0].item()
                     payload['cls_loss'] = loss_items[1].item()
                     payload['dfl_loss'] = loss_items[2].item()
+
+                if train_loss is not None:
+                    payload['train_loss'] = float(train_loss)
 
                 if latencies is not None:
                     payload.update({

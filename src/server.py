@@ -1,15 +1,6 @@
 from src.communication import Communication
-from ultralytics.data.utils import check_det_dataset
-from model.YOLO11n_custom import YOLO11_Full
-from ultralytics.data.dataset import YOLODataset
-from torch.utils.data import DataLoader
+from model.Alexnet import AlexNet
 from src.utils import update_results_csv, create_run_dir
-from src.utils_box import non_max_suppression
-from ultralytics.utils.metrics import ap_per_class, box_iou
-from ultralytics.utils.ops import xywh2xyxy
-from ultralytics.cfg import get_cfg
-from ultralytics.utils import DEFAULT_CFG
-from ultralytics.utils.loss import v8DetectionLoss
 from src.mlflow import MLflowConnector
 from src.monitoring import DeviceMonitor
 import numpy as np
@@ -17,9 +8,12 @@ from tqdm import tqdm
 import pickle
 import torch
 import torch.nn as nn
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader, Subset
 import pandas as pd
 
-MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
+MLFLOW_TRACKING_URI = "http://smart-hvac.io.vn:5005/"
 EXPERIMENT_NAME = "Split_Learning"
 
 class Server:
@@ -28,6 +22,12 @@ class Server:
         config['rabbitmq']['host']='rabbitmq'
         self.num_client = config['clients']
         self.datasets = config['dataset']
+        dataset_name = self.datasets.get('data', self.datasets.get('name', 'CIFAR10'))
+        if str(dataset_name).upper() in ('CIFAR10', 'MNIST'):
+            self.num_classes = 10
+            self.class_names = [str(i) for i in range(10)]
+        else:
+            raise ValueError(f"Unsupported AlexNet classification dataset: {dataset_name}")
         self.client = {}
         self.comm = Communication(config)
         self.registed = [0,0]
@@ -53,6 +53,9 @@ class Server:
         self.dfl_loss = []
 
         self.client_delays = []
+        self.train_losses = {}
+        self.monitoring_enabled = config.get('monitoring', {}).get('enabled', False)
+        self.val_loader = self._build_validation_loader(dataset_name)
         
         self.mlflow_connector = MLflowConnector(
             tracking_uri=MLFLOW_TRACKING_URI,
@@ -66,7 +69,7 @@ class Server:
             "num_workers": self.num_workers,
             "num_epochs": self.num_epochs,
             "optimizer_name": self.optimizer_name,
-            "model_name": "YOLO11n"
+            "model_name": "AlexNet"
         }
         self.mlflow_connector.log_params(hyperparams)
 
@@ -76,8 +79,9 @@ class Server:
         self.comm.delete_old_queues(['intermediate_queue', 'gradient_queue'])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('server_queue')
-        self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
-        self.monitor.start()
+        if self.monitoring_enabled:
+            self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
+            self.monitor.start()
 
         self.comm.consume_messages('server_queue', self.on_message)
 
@@ -108,9 +112,6 @@ class Server:
                 self.nb_count += 1
 
                 if self.nb_count == self.num_client[0]:
-                    self.data_cfg = check_det_dataset(self.datasets[0])
-                    self.num_classes = self.data_cfg['nc']
-                    self.class_names = self.data_cfg['names']
                     nb = self.get_total_nb_by_layer(layer_id = 1)
                     self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), datasets = None, nb = nb, nc = self.num_classes, class_names = self.class_names)
 
@@ -119,6 +120,8 @@ class Server:
                 layer_id = payload.get('layer_id')
                 client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
+                if layer_id == 2 and payload.get('train_loss') is not None:
+                    self.train_losses[epoch] = float(payload['train_loss'])
                 if layer_id == 1:
                     log_entry = {
                         'epoch': payload.get('epoch'),
@@ -132,11 +135,6 @@ class Server:
                         'grad_delay': payload.get('grad_delay')
                     }
                     self.client_delays.append(log_entry)
-                elif layer_id == 2:
-                    self.box_loss.append(payload.get('box_loss'))
-                    self.cls_loss.append(payload.get('cls_loss'))
-                    self.dfl_loss.append(payload.get('dfl_loss'))
-
                 save_path = f"{self.run_dir}/client_layer_{layer_id}_epoch_{epoch+1}.pt"
                 with open(save_path, "wb") as f:
                     f.write(model_data)
@@ -149,55 +147,20 @@ class Server:
                 server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
 
                 if len(edge_model) == self.num_client[0] and len(server_model) == self.num_client[1]:
-                    model_full = YOLO11_Full(nc = self.num_classes)
                     print("Edge model: ", edge_model)
                     print("Server model: ", server_model)
-                    
-                    self.model = self.merged_model(
-                        model_full,
-                        edge_models_list=edge_model,
-                        server_pt_path=server_model[0][0]
-                    ).to(self.device)
-
-                    self.data_cfg = check_det_dataset(self.datasets[0])
-                    self.model.names = self.data_cfg['names']
-                    self.yolo_args = get_cfg(DEFAULT_CFG)
-                    self.model.args = self.yolo_args
-
-                    self.criterion = v8DetectionLoss(self.model)
-
-                    self.val_dataset = YOLODataset(
-                        img_path=self.data_cfg["val"],
-                        imgsz=640,
-                        data=self.data_cfg,
-                        augment=False,
-                        hyp=self.yolo_args,
-                        rect=False,
-                        stride=32
-                    )
-                    self.val_loader = DataLoader(
-                        self.val_dataset,
-                        batch_size=self.batch_size,
-                        shuffle=False,
-                        num_workers=self.num_workers,
-                        collate_fn=self.val_dataset.collate_fn
-                    )
-
-                    avg_val_loss, val_loss_items, map50, map5095, mp, mr = self.validate_one_epoch(epoch)
+                    edge_state = self.aggregate_states(edge_model)
+                    server_state = self.aggregate_states(server_model, weighted=False)
+                    self.model = AlexNet(num_classes=self.num_classes).to(self.device)
+                    self.model.load_state_dict({**edge_state, **server_state}, strict=True)
+                    full_path = f"{self.run_dir}/alexnet_epoch_{self.epoch}.pt"
+                    torch.save(self.model.state_dict(), full_path)
+                    print(f"Merged AlexNet model saved to {full_path}")
+                    val_loss, precision, recall, accuracy = self.validate_one_epoch(epoch)
 
                     print("Delay tables: ", self.client_delays)
                     avg_delays = self.get_epoch_averages(self.epoch - 1)
-                    self.mlflow_connector.log_metrics({
-                        "train/box_loss": self.box_loss[self.epoch - 1],
-                        "train/cls_loss": self.cls_loss[self.epoch - 1],
-                        "train/dfl_loss": self.dfl_loss[self.epoch - 1],
-                        "val/box_loss": val_loss_items[0].item(),
-                        "val/cls_loss": val_loss_items[1].item(),
-                        "val/dfl_loss": val_loss_items[2].item(),
-                        "metrics/precision": mp,
-                        "metrics/recall": mr,
-                        "metrics/mAP50": map50,
-                        "metrics/mAP50-95": map5095,
+                    metrics = {
                         "latency/batch_e2e": avg_delays.get("batch_e2e", 0),
                         "latency/edge_forward": avg_delays.get("edge_forward", 0),
                         "latency/edge_backward": avg_delays.get("edge_backward", 0),
@@ -205,37 +168,33 @@ class Server:
                         "latency/server_backward": avg_delays.get("server_backward", 0),
                         "latency/inter_delay": avg_delays.get("inter_delay", 0),
                         "latency/grad_delay": avg_delays.get("grad_delay", 0),
-                        }, step=epoch+1)
-                    update_results_csv(epoch + 1, avg_val_loss, map50, map5095, self.run_dir)
-
-                    # Save best model
-                    if map50 > self.best_fitness:
-                        self.best_fitness = map50
-                        best_path = f"{self.run_dir}/best.pt"
-                        args_dict = vars(self.yolo_args)
-                        best_ckpt = {
-                            'model': self.model.state_dict(),
-                            'nc': self.num_classes,
-                            'names': self.class_names,
-                            'args': args_dict,
-                            'train_args': args_dict,
-                            'epoch': epoch,
-                            'metrics': {'mAP50': map50, 'mAP50-95': map5095}
-                        }
-                        torch.save(best_ckpt, best_path)
-                        print(f"New best model saved to {best_path}")
+                    }
+                    train_loss = self.train_losses.get(epoch)
+                    if train_loss is not None:
+                        metrics["train/loss"] = train_loss
+                    metrics.update({
+                        "val/loss": val_loss,
+                        "val/precision": precision,
+                        "val/recall": recall,
+                        "val/accuracy": accuracy,
+                    })
+                    self.mlflow_connector.log_metrics(metrics, step=epoch + 1)
+                    update_results_csv(
+                        epoch + 1, train_loss, val_loss, accuracy * 100, self.run_dir
+                    )
 
                     # Save global model
                     if self.epoch % self.num_epochs == 0 and  self.round < self.num_rounds:
-                        args_dict = vars(self.yolo_args)
-                        save_path = f"{self.run_dir}/global_model_{self.round}.pt"
-                        ckpt = {'model': self.model,
-                                'args': args_dict,
-                                'train_args': args_dict,
-                                'epoch': -1}
-                        torch.save(ckpt, save_path)
-                        print(f"Model saved to {save_path}")
-                        self.comm.publish_global_model(self.get_client_ids_by_layer(), global_model_path = save_path, round = self.round)
+                        edge_path = f"{self.run_dir}/global_edge_{self.round}.pt"
+                        server_path = f"{self.run_dir}/global_server_{self.round}.pt"
+                        torch.save(edge_state, edge_path)
+                        torch.save(server_state, server_path)
+                        self.comm.publish_global_model(
+                            self.get_client_ids_by_layer(layer_id=1), edge_path, self.round
+                        )
+                        self.comm.publish_global_model(
+                            self.get_client_ids_by_layer(layer_id=2), server_path, self.round
+                        )
                         self.round += 1
                     
                     self.intermediate_model = [0,0]
@@ -265,6 +224,55 @@ class Server:
     
     def get_total_nb_by_layer(self, layer_id):
         return sum(info.get("nb_train", 0) for info in self.client.values() if info.get("layer_id") == layer_id)
+
+    def _build_validation_loader(self, dataset_name):
+        transform_steps = [transforms.Resize((227, 227))]
+        if str(dataset_name).upper() == 'MNIST':
+            transform_steps.append(transforms.Grayscale(num_output_channels=3))
+            dataset_class = torchvision.datasets.MNIST
+        else:
+            dataset_class = torchvision.datasets.CIFAR10
+        transform_steps.extend([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+        dataset = dataset_class(
+            root='./data', train=False, download=True,
+            transform=transforms.Compose(transform_steps)
+        )
+        fraction = float(self.datasets.get('validation_fraction', self.datasets.get('subset_fraction', 1.0)))
+        if not 0 < fraction <= 1:
+            raise ValueError('dataset.validation_fraction must be in the range (0, 1].')
+        if fraction < 1.0:
+            size = max(1, int(len(dataset) * fraction))
+            indices = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(42))[:size]
+            dataset = Subset(dataset, indices.tolist())
+        print(f"Server validation samples: {len(dataset)}", flush=True)
+        return DataLoader(
+            dataset, batch_size=self.batch_size, shuffle=False,
+            num_workers=self.num_workers, pin_memory=self.device.type == 'cuda'
+        )
+
+    @staticmethod
+    def aggregate_states(models, weighted=True):
+        """Average compatible AlexNet state dictionaries."""
+        if not models:
+            raise ValueError("No model checkpoints to aggregate.")
+        total_weight = sum(samples for _, samples in models) if weighted else len(models)
+        if total_weight <= 0:
+            total_weight = len(models)
+            weighted = False
+
+        averaged = {}
+        for path, samples in models:
+            state = torch.load(path, map_location='cpu')
+            if isinstance(state, dict) and 'state_dict' in state:
+                state = state['state_dict']
+            weight = (samples / total_weight) if weighted else (1.0 / len(models))
+            for key, value in state.items():
+                contribution = value * weight
+                averaged[key] = contribution if key not in averaged else averaged[key] + contribution
+        return averaged
     
     def merged_model(self, full_model, edge_models_list, server_pt_path):
         server_state = torch.load(server_pt_path, map_location='cpu')
@@ -332,71 +340,40 @@ class Server:
     def validate_one_epoch(self, epoch):
         self.model.eval()
         running_loss = 0.0
-        stats = [] 
-        conf_thres = 0.001
-        iou_thres = 0.7
-        val_progress_bar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
+        confusion = torch.zeros(
+            self.num_classes, self.num_classes, dtype=torch.long, device=self.device
+        )
+        criterion = nn.CrossEntropyLoss()
+        val_progress_bar = tqdm(self.val_loader, desc=f"Epoch {epoch + 1} [Val]")
         
         with torch.no_grad():
-            for batch_idx, batch in enumerate(val_progress_bar):
-                images = batch['img'].to(self.device, non_blocking=True).float() / 255.0
-                
-                batch_idx_tensor = batch['batch_idx'].view(-1, 1).to(self.device)
-                cls_tensor = batch['cls'].view(-1, 1).to(self.device)
-                bboxes_tensor = batch['bboxes'].to(self.device)
-                targets = torch.cat((batch_idx_tensor, cls_tensor, bboxes_tensor), 1)
-                preds = self.model(images) 
-                
-                if isinstance(preds, tuple):
-                    nms_input = preds[0]
-                    loss_input = preds[1]
-                else:
-                    nms_input = preds
-                    loss_input = preds
-                loss, loss_items = self.criterion(loss_input, batch)
-                running_loss += loss.sum().item()
+            for images, labels in val_progress_bar:
+                images = images.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
+                logits = self.model(images)
+                loss = criterion(logits, labels)
+                running_loss += loss.item()
+                predictions = logits.argmax(dim=1)
+                indices = labels * self.num_classes + predictions
+                confusion += torch.bincount(
+                    indices, minlength=self.num_classes ** 2
+                ).reshape(self.num_classes, self.num_classes)
 
-                preds_nms = non_max_suppression(nms_input, conf_thres=conf_thres, iou_thres=iou_thres)
-                for i, pred in enumerate(preds_nms):
-                    target_labels = targets[targets[:, 0] == i][:, 1:]
-                    nl, npr = target_labels.shape[0], pred.shape[0]
-                    correct = torch.zeros(npr, 10, dtype=torch.bool, device=self.device)
-
-                    if npr == 0:
-                        if nl:
-                            stats.append((correct.cpu(), torch.tensor([], device='cpu'), torch.tensor([], device='cpu'), target_labels[:, 0].cpu()))
-                        continue
-
-                    if nl:
-                        target_boxes = xywh2xyxy(target_labels[:, 1:]) 
-                        target_boxes[:, [0, 2]] *= images.shape[3]
-                        target_boxes[:, [1, 3]] *= images.shape[2]
-                        labels_pixel = torch.cat((target_labels[:, 0:1], target_boxes), 1)
-                        correct = self.process_batch(pred, labels_pixel)
-
-                    stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), target_labels[:, 0].cpu()))
-
-                val_progress_bar.set_postfix(val_loss=f'{loss.sum().item():.4f}')
-
-        stats = [np.concatenate(x, 0) for x in zip(*stats)]
-        
-        if len(stats) and stats[0].any():
-            results = ap_per_class(*stats, plot=False, save_dir=self.run_dir, names=self.model.names)
-            
-            p, r, ap50, ap = results[2], results[3], results[5][:, 0], results[5].mean(1)
-            
-            mp = p.mean()       # Mean Precision
-            mr = r.mean()       # Mean Recall
-            map50 = ap50.mean() # mAP@0.5
-            map5095 = ap.mean() # mAP@0.5:0.95
-        else:
-            mp, mr, map50, map5095 = 0.0, 0.0, 0.0, 0.0
-
-        print(f"Validation Results: Precision: {mp:.4f}, Recall: {mr:.4f}, mAP50: {map50:.4f}, mAP50-95: {map5095:.4f}")
-        
         avg_val_loss = running_loss / len(self.val_loader)
-        
-        return avg_val_loss, loss_items, map50, map5095, mp, mr
+        true_positive = confusion.diag().float()
+        predicted_positive = confusion.sum(dim=0).float()
+        actual_positive = confusion.sum(dim=1).float()
+        precision_per_class = true_positive / predicted_positive.clamp_min(1)
+        recall_per_class = true_positive / actual_positive.clamp_min(1)
+        precision = precision_per_class.mean().item()
+        recall = recall_per_class.mean().item()
+        accuracy = (true_positive.sum() / confusion.sum().clamp_min(1)).item()
+        print(
+            f"[Validation][Epoch {epoch + 1}] loss={avg_val_loss:.4f} - "
+            f"P={precision:.4f} - R={recall:.4f} - Accuracy={accuracy:.4f}",
+            flush=True,
+        )
+        return avg_val_loss, precision, recall, accuracy
     
     def process_batch(self, detections, labels):
         iou_v = torch.linspace(0.5, 0.95, 10, device=self.device)
