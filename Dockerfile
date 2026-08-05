@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
+    ultralytics==8.4.6 \
     requests==2.32.3 \
     pika==1.3.2\
     mlflow\

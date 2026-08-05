@@ -118,6 +118,45 @@ def create_run_dir(project_root, layer_id=None, client_id=None):
     print(f"Created run directory: {run_dir}")
     return run_dir
 
+def get_cut_layers(config):
+    """Return cut-layer indices as a validated list of integers.
+
+    The preferred format is a top-level ``cut_layer`` list. The legacy scalar
+    (or list) under ``model.cut_layer`` is accepted for backward compatibility.
+    """
+    cut_layers = config.get('cut_layer')
+    if cut_layers is None:
+        cut_layers = config.get('model', {}).get('cut_layer')
+
+    if cut_layers is None:
+        raise ValueError("Missing 'cut_layer' configuration.")
+    if not isinstance(cut_layers, (list, tuple)):
+        cut_layers = [cut_layers]
+    if not cut_layers:
+        raise ValueError("'cut_layer' must contain at least one layer index.")
+
+    normalized = []
+    for cut_layer in cut_layers:
+        if isinstance(cut_layer, bool):
+            raise ValueError("Each 'cut_layer' value must be an integer.")
+        try:
+            normalized.append(int(cut_layer))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid cut layer {cut_layer!r}; expected an integer."
+            ) from exc
+    return normalized
+
+def get_cut_layer(config, index=0):
+    """Return one cut-layer index for the current two-part model."""
+    cut_layers = get_cut_layers(config)
+    try:
+        return cut_layers[index]
+    except IndexError as exc:
+        raise ValueError(
+            f"Missing cut_layer at index {index}; configured values: {cut_layers}."
+        ) from exc
+
 def load_config_and_setup(config_path, project_root):
     """
     Tải cấu hình, thiết lập device và trả về các thông số.
@@ -125,6 +164,9 @@ def load_config_and_setup(config_path, project_root):
     # Tải cấu hình từ file config.yaml
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
+
+    # Normalize both the new list format and the legacy model.cut_layer format.
+    config['cut_layer'] = get_cut_layers(config)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')

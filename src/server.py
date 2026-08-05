@@ -3,7 +3,7 @@ from ultralytics.data.utils import check_det_dataset
 from model.YOLO11n_custom import YOLO11_Full
 from ultralytics.data.dataset import YOLODataset
 from torch.utils.data import DataLoader
-from src.utils import update_results_csv, create_run_dir
+from src.utils import update_results_csv, create_run_dir, get_cut_layer
 from src.utils_box import non_max_suppression
 from ultralytics.utils.metrics import ap_per_class, box_iou
 from ultralytics.utils.ops import xywh2xyxy
@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 
-MLFLOW_TRACKING_URI = "http://14.225.254.18:5000"
+MLFLOW_TRACKING_URI = "http://smart-hvac.io.vn:5005/"
 EXPERIMENT_NAME = "Split_Learning"
 
 class Server:
@@ -43,7 +43,7 @@ class Server:
         self.num_rounds = config['training']['num_rounds']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
-        self.cut_layer = config['model'].get('cut_layer')
+        self.cut_layer = get_cut_layer(config)
         self.epoch = 1
         self.round = 1 
         self.best_fitness = 0.0
@@ -76,8 +76,8 @@ class Server:
         self.comm.delete_old_queues(['intermediate_queue', 'gradient_queue'])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('server_queue')
-        self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
-        self.monitor.start()
+        # self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
+        # self.monitor.start()
 
         self.comm.consume_messages('server_queue', self.on_message)
 

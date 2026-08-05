@@ -1,4 +1,4 @@
-ultralytics
+ultralytics==8.4.6
 mlflow
 tqdm
 pika

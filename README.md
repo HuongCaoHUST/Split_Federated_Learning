@@ -99,8 +99,8 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `clients`: A list defining the number of clients of each type. For example, `[1, 1]` means one client for part 1 and one for part 2.
 -   `training`: Parameters for the training process like `num_epochs`, `num_rounds`, `batch_size`, and `learning_rate`.
 -   `model`: Defines the model architecture.
-    -   `cut_layer`: The index of the layer where the model is split. This is a critical parameter for Split Learning.
     -   `pretrained_path`: Path to a pretrained model to start from.
+-   `cut_layer`: A list of split indices, for example `[10]`. The current two-part model uses the first index.
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 

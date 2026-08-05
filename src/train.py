@@ -16,7 +16,7 @@ from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
 from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_15, YOLO11_SERVER_15, YOLO11_EDGE_20, YOLO11_SERVER_20
-from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory
+from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory, get_cut_layer
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
@@ -50,7 +50,7 @@ class TrainerEdge:
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['edge']
-        self.cut_layer = config['model']['cut_layer']
+        self.cut_layer = get_cut_layer(config)
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
         self.pretrained_path = config['model'].get('pretrained_path')
@@ -149,7 +149,6 @@ class TrainerEdge:
             response_body = self.comm.consume_message_sync(self.gradient_queue_name)
             received_grad_time = time.time()
             response = pickle.loads(response_body)
-            print("Received response keys: ", response.keys())
 
             server_grad_numpy = response['gradient']
             batch_loss = response['loss']
@@ -282,7 +281,7 @@ class TrainerServer:
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['server']
-        self.cut_layer = config['model']['cut_layer']
+        self.cut_layer = get_cut_layer(config)
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
 

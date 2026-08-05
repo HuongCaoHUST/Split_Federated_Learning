@@ -1,11 +1,11 @@
 clients:
-  - 1
+  - 2
   - 1
 
 training:
-  num_epochs: 2
+  num_epochs: 20
   num_rounds: 4
-  batch_size: 8
+  batch_size: 1
   learning_rate: 0.001
   optimizer: 'SGD' # Adam or SGD
   momentum: 0.9
@@ -14,13 +14,17 @@ training:
 model:
   edge: 'AlexNet_EDGE'
   server: 'AlexNet_SERVER'
-  cut_layer: 10
   save_path: 'cifar_net.pth'
   save_model: true
   pretrained_path: './yolo11n.pt'
 
+cut_layer: 
+  - 10
+  - 10
+
 dataset:
-  - datasets/livingroom_4_1.yaml
+  - datasets/coco8.yaml
+  - datasets/coco8.yaml
 
 rabbitmq:
   host: 'rabbitmq'
