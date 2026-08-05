@@ -136,7 +136,16 @@ class Communication:
         }
         self.publish_message('server_queue', pickle.dumps(payload))
 
-    def send_start_message(self, client_ids = None, datasets = None, nb = None, nc = None, class_names = None, cut_layers = None):
+    def send_start_message(
+        self,
+        client_ids=None,
+        datasets=None,
+        nb=None,
+        nc=None,
+        class_names=None,
+        cut_layers=None,
+        supported_cut_layers=None,
+    ):
         """
         Sends register message to centralized server.
         """
@@ -149,8 +158,17 @@ class Communication:
                 if dataset is not None: payload['datasets'] = dataset
             if cut_layers is not None and i < len(cut_layers):
                 payload['cut_layer'] = cut_layers[i]
+            if supported_cut_layers is not None:
+                payload['supported_cut_layers'] = list(supported_cut_layers)
             if nb is not None and nc is not None:
-                payload['nb'] = nb
+                if isinstance(nb, (list, tuple)):
+                    if i >= len(nb):
+                        raise ValueError(
+                            "The batch allocation list is shorter than client_ids."
+                        )
+                    payload['nb'] = nb[i]
+                else:
+                    payload['nb'] = nb
                 payload['nc'] = nc
                 payload['class_names'] = class_names
                 
@@ -168,7 +186,17 @@ class Communication:
         }
         self.publish_message(queue_name, pickle.dumps(payload))
 
-    def publish_model(self, queue_name, model_path, layer_id = None, client_id = None, epoch = None, loss_items = None, latencies = None):
+    def publish_model(
+        self,
+        queue_name,
+        model_path,
+        layer_id=None,
+        client_id=None,
+        epoch=None,
+        loss_items=None,
+        latencies=None,
+        route_batch_counts=None,
+    ):
 
         try:
             if not os.path.exists(model_path):
@@ -201,6 +229,9 @@ class Communication:
                         'inter_delay':   latencies[5].item(),
                         'grad_delay':    latencies[6].item()
                     })
+
+                if route_batch_counts is not None:
+                    payload['route_batch_counts'] = dict(route_batch_counts)
 
             self.publish_message(queue_name, pickle.dumps(payload))
             print(f"Successfully published model from {model_path} to '{queue_name}'")

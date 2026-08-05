@@ -15,14 +15,15 @@ from model.Mobilenet import MobileNet
 from model.VGG16 import VGG16
 from model.VGG16_EDGE import VGG16_EDGE
 from model.VGG16_SERVER import VGG16_SERVER
-from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_SERVER, YOLO11_EDGE_5, YOLO11_SERVER_5, YOLO11_EDGE_15, YOLO11_SERVER_15, YOLO11_EDGE_20, YOLO11_SERVER_20
-from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory, get_cut_layer
+from model.YOLO11n_custom import YOLO11_EDGE, YOLO11_EDGE_5, YOLO11_EDGE_15, YOLO11_EDGE_20, YOLO11_DYNAMIC_SERVER
+from src.utils import BatchLogger, update_results_csv, save_plots, count_parameters, create_run_dir, clear_memory, get_cut_layer, get_cut_layers, get_server_cut_layer
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.cfg import get_cfg
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 import numpy as np
+from collections import defaultdict, deque
 from src.utils_box import non_max_suppression, scale_boxes, xywh2xyxy, box_iou
 from ultralytics.utils.metrics import ap_per_class
 
@@ -74,6 +75,11 @@ class TrainerEdge:
         }
 
         model_class = MODEL_MAP.get(self.cut_layer)
+        if model_class is None:
+            raise ValueError(
+                f"Unsupported edge cut_layer={self.cut_layer}; "
+                f"supported values: {sorted(MODEL_MAP)}."
+            )
 
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
@@ -119,7 +125,7 @@ class TrainerEdge:
         self.history_val_loss = []
         self.history_val_accuracy = []
 
-    def train_one_epoch(self, epoch):
+    def train_one_epoch(self, epoch, global_epoch):
         self.model.train()
         running_loss = 0.0
         train_progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
@@ -139,7 +145,10 @@ class TrainerEdge:
             payload = {
                 'client_output': [x.detach().cpu().numpy() for x in outputs],
                 'label_data': label_data,
-                'reply_to': self.gradient_queue_name
+                'reply_to': self.gradient_queue_name,
+                'client_id': self.client_id,
+                'cut_layer': self.cut_layer,
+                'epoch': global_epoch,
             }
 
             data_bytes = pickle.dumps(payload)
@@ -243,13 +252,13 @@ class TrainerEdge:
         self.comm.send_training_metadata('server_queue', self.client_id, nb_train)
 
         for epoch in range(self.num_epochs):
-            avg_train_loss, latencies = self.train_one_epoch(epoch)
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round
+            else: global_epoch = epoch
+
+            avg_train_loss, latencies = self.train_one_epoch(epoch, global_epoch)
             print(f'Epoch [{epoch+1}/{self.num_epochs}] -> Train Loss: {avg_train_loss:.4f}')
 
             # Save checkpoint
-            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
-            else: global_epoch = epoch
-
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
@@ -281,25 +290,25 @@ class TrainerServer:
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
         self.momentum = config['training'].get('momentum', 0.9)
         self.model_name = config['model']['server']
-        self.cut_layer = get_cut_layer(config)
+        self.cut_layers = get_cut_layers(config)
+        self.cut_layer = get_server_cut_layer(self.cut_layers)
         self.model_save_path = config['model']['save_path']
         self.save_model_enabled = config['model'].get('save_model', True)
-
-        MODEL_MAP = {
-            5: YOLO11_SERVER_5,
-            10: YOLO11_SERVER,
-            15: YOLO11_SERVER_15,
-            20: YOLO11_SERVER_20
-        }
-
-        model_class = MODEL_MAP.get(self.cut_layer)
 
         # Initialize model
         if self.global_model_path is not None:
             print("Continue Training with global model: ", self.global_model_path)
-            self.model = model_class(pretrained = self.global_model_path, nc = self.nc).to(self.device)
+            self.model = YOLO11_DYNAMIC_SERVER(
+                supported_cut_layers=self.cut_layers,
+                pretrained=self.global_model_path,
+                nc=self.nc,
+            ).to(self.device)
         else:
-            self.model = model_class(pretrained = 'yolo11n.pt', nc = self.nc).to(self.device)
+            self.model = YOLO11_DYNAMIC_SERVER(
+                supported_cut_layers=self.cut_layers,
+                pretrained='yolo11n.pt',
+                nc=self.nc,
+            ).to(self.device)
             
         self.model.names = self.class_names
         self.yolo_args = get_cfg(DEFAULT_CFG)
@@ -320,19 +329,57 @@ class TrainerServer:
         self.history_train_loss = []
         self.history_val_loss = []
         self.history_val_accuracy = []
+        self.pending_intermediate_payloads = defaultdict(deque)
 
-    def train_one_epoch(self, epoch):
+    def _consume_intermediate_for_epoch(self, expected_epoch):
+        pending = self.pending_intermediate_payloads[expected_epoch]
+        if pending:
+            return pending.popleft()
+
+        while True:
+            body = self.comm.consume_message_sync('intermediate_queue')
+            receive_time = time.time()
+            payload = pickle.loads(body)
+            payload_epoch = payload.get('epoch')
+            if payload_epoch is None:
+                raise ValueError("Intermediate payload is missing 'epoch'.")
+            payload_epoch = int(payload_epoch)
+
+            if payload_epoch < expected_epoch:
+                raise ValueError(
+                    f"Received stale intermediate batch for epoch {payload_epoch}; "
+                    f"expected epoch {expected_epoch}."
+                )
+            if payload_epoch == expected_epoch:
+                return payload, receive_time
+
+            self.pending_intermediate_payloads[payload_epoch].append(
+                (payload, receive_time)
+            )
+
+    def train_one_epoch(self, epoch, global_epoch):
         self.model.train()
         running_loss = 0.0
+        route_batch_counts = {cut_layer: 0 for cut_layer in self.cut_layers}
         train_progress_bar = tqdm(range(self.nb), desc=f"Epoch {epoch+1}/{self.num_epochs} [Train]")
         
         for i in train_progress_bar:
-            body = self.comm.consume_message_sync('intermediate_queue')
-            receive_inter_time = time.time()
-            payload = pickle.loads(body)
+            payload, receive_inter_time = self._consume_intermediate_for_epoch(
+                global_epoch
+            )
             client_data_numpy = payload['client_output']
             label_data = payload['label_data']
             gradient_queue = payload['reply_to']
+            cut_layer = payload.get('cut_layer')
+            if cut_layer is None:
+                raise ValueError("Intermediate payload is missing 'cut_layer'.")
+            cut_layer = int(cut_layer)
+            if cut_layer not in route_batch_counts:
+                raise ValueError(
+                    f"Received cut_layer={cut_layer}, but the server was "
+                    f"configured for {sorted(route_batch_counts)}."
+                )
+            route_batch_counts[cut_layer] += 1
 
             client_tensors = []
             for client_np in client_data_numpy:
@@ -344,7 +391,7 @@ class TrainerServer:
                 )
                 client_tensors.append(t)
 
-            outputs = self.model(client_tensors)
+            outputs = self.model(client_tensors, cut_layer=cut_layer)
             end_server_forward_time = time.time()
             loss, loss_items = self.criterion(outputs, label_data)
             self.optimizer.zero_grad()
@@ -373,7 +420,7 @@ class TrainerServer:
             )
 
             running_loss += total_loss.item()
-        return running_loss / len(train_progress_bar), loss_items
+        return running_loss / len(train_progress_bar), loss_items, route_batch_counts
 
     def validate_one_epoch(self, epoch):
         self.model.eval()
@@ -419,19 +466,23 @@ class TrainerServer:
         print("Starting Training...")
 
         for epoch in range(self.num_epochs):
-            avg_train_loss, loss_items = self.train_one_epoch(epoch)
+            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round
+            else: global_epoch = epoch
+
+            avg_train_loss, loss_items, route_batch_counts = self.train_one_epoch(
+                epoch,
+                global_epoch,
+            )
 
             # avg_val_loss, val_accuracy = self.validate_one_epoch(epoch)
 
             # Save checkpoint
-            if self.round >= 1 : global_epoch = epoch + self.num_epochs*self.round 
-            else: global_epoch = epoch
-
             save_path = os.path.join(self.run_dir, f'cifar_net_server_{global_epoch+1}.pt')
             torch.save(self.model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
             self.comm.publish_model(queue_name='server_queue', model_path = save_path, layer_id = self.layer_id, client_id = self.client_id,
-                                    epoch = global_epoch, loss_items = loss_items)
+                                    epoch = global_epoch, loss_items = loss_items,
+                                    route_batch_counts = route_batch_counts)
             
             # Log to CSV
             update_results_csv(epoch + 1, avg_train_loss, save_dir = self.run_dir)

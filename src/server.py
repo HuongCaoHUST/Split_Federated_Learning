@@ -7,7 +7,7 @@ from src.utils import (
     update_results_csv,
     create_run_dir,
     get_client_cut_layers,
-    get_aggregation_cut_layer,
+    get_server_cut_layer,
 )
 from src.utils_box import non_max_suppression
 from ultralytics.utils.metrics import ap_per_class, box_iou
@@ -33,7 +33,7 @@ class Server:
         config['rabbitmq']['host']='rabbitmq'
         self.num_client = config['clients']
         self.client_cut_layers = get_client_cut_layers(config, self.num_client[0])
-        self.cut_layer = get_aggregation_cut_layer(self.client_cut_layers)
+        self.cut_layer = get_server_cut_layer(self.client_cut_layers)
         self.datasets = config['dataset']
         self.client = {}
         self.comm = Communication(config)
@@ -137,13 +137,27 @@ class Server:
                     self.class_names = self.data_cfg['names']
                     nb = self.get_total_nb_by_layer(layer_id = 1)
                     server_client_ids = self.get_client_ids_by_layer(layer_id=2)
+                    worker_count = len(server_client_ids)
+                    if worker_count == 0:
+                        raise ValueError("No dynamic server worker is registered.")
+                    if nb < worker_count:
+                        raise ValueError(
+                            f"Cannot distribute {nb} batches across "
+                            f"{worker_count} server workers."
+                        )
+                    batches_per_worker, remainder = divmod(nb, worker_count)
+                    batch_allocations = [
+                        batches_per_worker + (worker_index < remainder)
+                        for worker_index in range(worker_count)
+                    ]
                     self.comm.send_start_message(
                         server_client_ids,
                         datasets=None,
-                        nb=nb,
+                        nb=batch_allocations,
                         nc=self.num_classes,
                         class_names=self.class_names,
                         cut_layers=self.get_cut_layers_by_client_ids(server_client_ids),
+                        supported_cut_layers=self.client_cut_layers,
                     )
 
             elif action == 'update_model':
@@ -177,6 +191,11 @@ class Server:
                 idx = layer_id - 1
                 self.intermediate_model[idx] += 1
                 self.client[client_id][f"model_{epoch+1}"] = save_path
+                if payload.get('route_batch_counts') is not None:
+                    self.client[client_id][f"route_batch_counts_{epoch+1}"] = {
+                        int(cut_layer): int(batch_count)
+                        for cut_layer, batch_count in payload['route_batch_counts'].items()
+                    }
                 edge_model = self.get_models_by_layer_and_epoch(layer_id=1, epoch=self.epoch)
                 server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
 
@@ -188,7 +207,7 @@ class Server:
                     self.model = self.merged_model(
                         model_full,
                         edge_models_list=edge_model,
-                        server_pt_path=server_model[0][0]
+                        server_models_list=server_model,
                     ).to(self.device)
 
                     self.data_cfg = check_det_dataset(self.datasets[0])
@@ -294,74 +313,246 @@ class Server:
         models = []
         for client_id, info in self.client.items():
             if info.get("layer_id") == layer_id and key in info:
-                nb = info.get("nb_train", 0)
-                models.append((info[key], nb))
+                models.append({
+                    "client_id": client_id,
+                    "path": info[key],
+                    "num_batches": info.get("nb_train", 0),
+                    "cut_layer": info.get("cut_layer"),
+                    "route_batch_counts": info.get(
+                        f"route_batch_counts_{epoch}",
+                        {},
+                    ),
+                })
         return models
     
     def get_total_nb_by_layer(self, layer_id):
         return sum(info.get("nb_train", 0) for info in self.client.values() if info.get("layer_id") == layer_id)
     
-    def merged_model(self, full_model, edge_models_list, server_pt_path):
-        server_state = torch.load(server_pt_path, map_location='cpu')
-        if 'model_state_dict' in server_state: server_state = server_state['model_state_dict']
-        elif 'model' in server_state: server_state = server_state['model']
+    @staticmethod
+    def _load_checkpoint_state(path):
+        checkpoint = torch.load(path, map_location='cpu')
+        if isinstance(checkpoint, nn.Module):
+            return checkpoint.state_dict()
+        if not isinstance(checkpoint, dict):
+            raise TypeError(f"Unsupported checkpoint type in {path}: {type(checkpoint)}")
 
-        full_sd = full_model.state_dict()
-        merged_sd = {}
+        for key in ('model_state_dict', 'state_dict', 'model'):
+            if key not in checkpoint:
+                continue
+            state = checkpoint[key]
+            if isinstance(state, nn.Module):
+                return state.state_dict()
+            if isinstance(state, dict):
+                return state
+        return checkpoint
 
-        # Edge side model
-        print(f"Aggregating {len(edge_models_list)} edge models...")
-        total_samples = sum(item[1] for item in edge_models_list)
-        if total_samples == 0:
-            raise ValueError("Total samples is 0, cannot calculate weighted average.")
+    @staticmethod
+    def _canonical_state_items(state, layer_offset=0):
+        """Yield each global layer state once, ignoring ModuleList aliases."""
+        seen = set()
+        for key, value in state.items():
+            clean_key = key
+            prefix_removed = True
+            while prefix_removed:
+                prefix_removed = False
+                for prefix in ('model.', 'layers.'):
+                    if clean_key.startswith(prefix):
+                        clean_key = clean_key[len(prefix):]
+                        prefix_removed = True
 
-        averaged_edge_state = {}
-
-        for path, num_samples in edge_models_list:
-            client_state = torch.load(path, map_location='cpu')
-            if 'model_state_dict' in client_state: client_state = client_state['model_state_dict']
-            elif 'model' in client_state: client_state = client_state['model']
-        
-            weight_factor = num_samples / total_samples
-            
-            for key, value in client_state.items():
-                clean_key = key.replace('model.', '').replace('layers.', '')
-                layer_idx = int(clean_key.split('.')[0])
-                if layer_idx <= self.cut_layer:
-                    if clean_key not in averaged_edge_state:
-                        averaged_edge_state[clean_key] = value * weight_factor
-                    else:
-                        averaged_edge_state[clean_key] += value * weight_factor
-        for clean_key, value in averaged_edge_state.items():
-            target_key = f"layers.{clean_key}"
-            
-            if target_key in full_sd:
-                if full_sd[target_key].shape == value.shape:
-                    merged_sd[target_key] = value
-                else:
-                    print(f"Incorrect size at {target_key}: Code {full_sd[target_key].shape} != File {value.shape}")
-        
-        # Server side model
-        SERVER_OFFSET = self.cut_layer + 1
-        for key, value in server_state.items():
-            clean_key = key.replace('model.', '').replace('layers.', '')
             parts = clean_key.split('.')
-            if parts[0].isdigit():
-                old_idx = int(parts[0])
+            if not parts or not parts[0].isdigit():
+                continue
 
-                new_idx = old_idx + SERVER_OFFSET
-                new_key_parts = [str(new_idx)] + parts[1:]
-                target_key = f"layers.{'.'.join(new_key_parts)}"
-                
-                if target_key in full_sd:
-                    if full_sd[target_key].shape == value.shape:
-                        merged_sd[target_key] = value
-                    else:
-                        print(f"Incorrect size at {target_key} (Gốc {old_idx}->Mới {new_idx}): Code {full_sd[target_key].shape} != File {value.shape}")
-                else:
-                    pass
-        full_model.load_state_dict(merged_sd, strict=False)
-        print("\nMerged model success.")
+            global_layer = int(parts[0]) + layer_offset
+            target_key = '.'.join(
+                ['layers', str(global_layer)] + parts[1:]
+            )
+            if target_key in seen:
+                continue
+            seen.add(target_key)
+            yield global_layer, target_key, value
+
+    @staticmethod
+    def _weighted_state_average(entries, target_tensor):
+        """Average one parameter/buffer using its actual batch exposure."""
+        total_batches = sum(entry['num_batches'] for entry in entries)
+        if total_batches <= 0:
+            raise ValueError("Cannot aggregate a state with zero batch exposure.")
+
+        if target_tensor.is_floating_point() or target_tensor.is_complex():
+            accumulator_dtype = (
+                torch.complex128 if target_tensor.is_complex() else torch.float64
+            )
+            accumulator = torch.zeros_like(
+                target_tensor,
+                dtype=accumulator_dtype,
+                device='cpu',
+            )
+            for entry in entries:
+                accumulator.add_(
+                    entry['value'].to(dtype=accumulator_dtype, device='cpu'),
+                    alpha=entry['num_batches'],
+                )
+            return (accumulator / total_batches).to(dtype=target_tensor.dtype)
+
+        accumulator = torch.zeros_like(
+            target_tensor,
+            dtype=torch.float64,
+            device='cpu',
+        )
+        for entry in entries:
+            accumulator.add_(
+                entry['value'].to(dtype=torch.float64, device='cpu'),
+                alpha=entry['num_batches'],
+            )
+        averaged = accumulator / total_batches
+        if target_tensor.dtype == torch.bool:
+            return (averaged >= 0.5).to(dtype=target_tensor.dtype)
+        return averaged.round().to(dtype=target_tensor.dtype)
+
+    def merged_model(self, full_model, edge_models_list, server_models_list):
+        """Aggregate each YOLO layer by the batches that traversed its copy.
+
+        For a global layer ``L``:
+        - an edge contributes when its cut is at or after ``L``;
+        - a dynamic server contributes batches whose cut is before ``L``.
+
+        This makes overlapping layers (for example layers 6..10 with cuts 5
+        and 10) a weighted combination of their edge and server copies.
+        """
+        if not edge_models_list:
+            raise ValueError("At least one edge model is required for aggregation.")
+        if not server_models_list:
+            raise ValueError("At least one server model is required for aggregation.")
+
+        total_batches = sum(
+            int(model['num_batches']) for model in edge_models_list
+        )
+        if total_batches <= 0:
+            raise ValueError("Total edge batch count must be greater than zero.")
+
+        fallback_route_counts = {}
+        for model in edge_models_list:
+            cut_layer = int(model['cut_layer'])
+            num_batches = int(model['num_batches'])
+            if num_batches <= 0:
+                raise ValueError(
+                    f"Edge client {model['client_id']} has invalid batch count "
+                    f"{num_batches}."
+                )
+            fallback_route_counts[cut_layer] = (
+                fallback_route_counts.get(cut_layer, 0) + num_batches
+            )
+
+        full_state = full_model.state_dict()
+        candidates = {}
+        source_layer_exposures = {}
+
+        def add_candidates(model, state, layer_offset, exposure_for_layer, source_kind):
+            source_name = f"{source_kind}:{model['client_id']}"
+            for global_layer, target_key, value in self._canonical_state_items(
+                state,
+                layer_offset=layer_offset,
+            ):
+                if target_key not in full_state:
+                    continue
+                if full_state[target_key].shape != value.shape:
+                    raise ValueError(
+                        f"Shape mismatch for {target_key} from {source_name}: "
+                        f"expected {tuple(full_state[target_key].shape)}, "
+                        f"received {tuple(value.shape)}."
+                    )
+
+                exposure = int(exposure_for_layer(global_layer))
+                if exposure <= 0:
+                    continue
+                candidates.setdefault(target_key, []).append({
+                    'value': value,
+                    'num_batches': exposure,
+                    'source': source_name,
+                })
+                source_layer_exposures[(source_name, global_layer)] = exposure
+
+        for model in edge_models_list:
+            state = self._load_checkpoint_state(model['path'])
+            edge_batches = int(model['num_batches'])
+            edge_cut = int(model['cut_layer'])
+            add_candidates(
+                model,
+                state,
+                layer_offset=0,
+                exposure_for_layer=lambda layer, cut=edge_cut, count=edge_batches: (
+                    count if layer <= cut else 0
+                ),
+                source_kind='edge',
+            )
+
+        for model in server_models_list:
+            route_counts = {
+                int(cut): int(count)
+                for cut, count in model.get('route_batch_counts', {}).items()
+            }
+            if not route_counts:
+                if len(server_models_list) != 1:
+                    raise ValueError(
+                        "route_batch_counts is required when aggregating multiple "
+                        "dynamic server workers."
+                    )
+                route_counts = fallback_route_counts
+
+            state = self._load_checkpoint_state(model['path'])
+            add_candidates(
+                model,
+                state,
+                layer_offset=self.cut_layer + 1,
+                exposure_for_layer=lambda layer, counts=route_counts: sum(
+                    count for cut, count in counts.items() if cut < layer
+                ),
+                source_kind='server',
+            )
+
+        exposure_by_layer = {}
+        for (_, global_layer), exposure in source_layer_exposures.items():
+            exposure_by_layer[global_layer] = (
+                exposure_by_layer.get(global_layer, 0) + exposure
+            )
+        invalid_exposures = {
+            layer: exposure
+            for layer, exposure in exposure_by_layer.items()
+            if exposure != total_batches
+        }
+        if invalid_exposures:
+            raise ValueError(
+                "Layer batch exposure does not match the total edge batches "
+                f"({total_batches}): {invalid_exposures}."
+            )
+
+        expected_keys = {
+            key for key in full_state if key.startswith('layers.')
+        }
+        missing_keys = sorted(expected_keys - candidates.keys())
+        if missing_keys:
+            preview = ', '.join(missing_keys[:5])
+            raise ValueError(
+                f"Aggregation has no source for {len(missing_keys)} model states: "
+                f"{preview}."
+            )
+
+        merged_state = {
+            key: self._weighted_state_average(entries, full_state[key])
+            for key, entries in candidates.items()
+        }
+        full_model.load_state_dict(merged_state, strict=False)
+
+        exposure_summary = ', '.join(
+            f"L{layer}={exposure}"
+            for layer, exposure in sorted(exposure_by_layer.items())
+        )
+        print(
+            f"Layer-wise aggregation succeeded with {total_batches} batches "
+            f"per state path ({exposure_summary})."
+        )
         return full_model
     
     def validate_one_epoch(self, epoch):

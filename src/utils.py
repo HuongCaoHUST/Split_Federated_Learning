@@ -177,19 +177,11 @@ def get_client_cut_layers(config, num_clients):
         )
     return cut_layers
 
-def get_aggregation_cut_layer(cut_layers):
-    """Return the cut layer shared by model-compatible aggregation members."""
+def get_server_cut_layer(cut_layers):
+    """Return the earliest cut layer that the dynamic server must own."""
     if not cut_layers:
-        raise ValueError("At least one cut_layer is required for aggregation.")
-
-    aggregation_cut_layer = cut_layers[0]
-    incompatible = [value for value in cut_layers if value != aggregation_cut_layer]
-    if incompatible:
-        raise ValueError(
-            "Clients whose model parameters are aggregated together must use "
-            f"compatible cut layers; configured values: {cut_layers}."
-        )
-    return aggregation_cut_layer
+        raise ValueError("At least one cut_layer is required by the server.")
+    return min(cut_layers)
 
 def load_config_and_setup(config_path, project_root):
     """

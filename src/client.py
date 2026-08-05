@@ -32,7 +32,9 @@ class Client:
             if payload.get('nb') is not None: self.nb = payload.get('nb')
             if payload.get('nc') is not None: self.nc = payload.get('nc')
             if payload.get('class_names') is not None: self.class_names = payload.get('class_names')
-            if payload.get('cut_layer') is not None:
+            if payload.get('supported_cut_layers') is not None:
+                self.config['cut_layer'] = payload.get('supported_cut_layers')
+            elif payload.get('cut_layer') is not None:
                 self.config['cut_layer'] = [payload.get('cut_layer')]
 
             print(f"Received action: {action}")
