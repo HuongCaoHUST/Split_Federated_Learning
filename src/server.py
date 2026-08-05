@@ -38,7 +38,8 @@ class Server:
         self.client = {}
         self.comm = Communication(config)
         self.registed = [0,0]
-        self.nb_count = 0
+        self.metadata_clients = set()
+        self.server_workers_started = False
         self.run_dir = create_run_dir('./', layer_id = 0)
         self.intermediate_model = [0,0]
         self.intermediate_model_layer_1 = []
@@ -79,7 +80,11 @@ class Server:
     def run(self):
         print("Server class initialized.")
         self.comm.connect()
-        self.comm.delete_old_queues(['intermediate_queue', 'gradient_queue'])
+        self.comm.delete_old_queues([
+            'server_queue',
+            'intermediate_queue',
+            'gradient_queue',
+        ])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('server_queue')
         # self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
@@ -128,10 +133,20 @@ class Server:
             elif action == 'send_number_batch':
                 nb = payload.get('nb_train')
                 client_id = payload.get('client_id')
+                if client_id not in self.client:
+                    raise ValueError(
+                        f"Received batch metadata from unknown client {client_id}."
+                    )
                 self.client[client_id]["nb_train"] = nb
-                self.nb_count += 1
+                if self.client[client_id].get("layer_id") == 1:
+                    self.metadata_clients.add(client_id)
 
-                if self.nb_count == self.num_client[0]:
+                edge_client_ids = self.get_client_ids_by_layer(layer_id=1)
+                all_edge_metadata_received = all(
+                    client_id in self.metadata_clients
+                    for client_id in edge_client_ids
+                )
+                if all_edge_metadata_received and not self.server_workers_started:
                     self.data_cfg = check_det_dataset(self.datasets[0])
                     self.num_classes = self.data_cfg['nc']
                     self.class_names = self.data_cfg['names']
@@ -159,12 +174,24 @@ class Server:
                         cut_layers=self.get_cut_layers_by_client_ids(server_client_ids),
                         supported_cut_layers=self.client_cut_layers,
                     )
+                    self.server_workers_started = True
 
             elif action == 'update_model':
                 model_data = payload.get('model_data')
                 layer_id = payload.get('layer_id')
                 client_id = payload.get('client_id')
                 epoch = payload.get('epoch')
+                if client_id not in self.client:
+                    raise ValueError(f"Received model from unknown client {client_id}.")
+                if epoch is None:
+                    raise ValueError("Model update is missing 'epoch'.")
+                model_epoch = int(epoch) + 1
+                if model_epoch < self.epoch:
+                    print(
+                        f"Ignoring stale model from client {client_id} for "
+                        f"epoch {model_epoch}; next expected epoch is {self.epoch}."
+                    )
+                    return
                 if layer_id == 1:
                     log_entry = {
                         'epoch': payload.get('epoch'),
@@ -183,19 +210,30 @@ class Server:
                     self.cls_loss.append(payload.get('cls_loss'))
                     self.dfl_loss.append(payload.get('dfl_loss'))
 
-                save_path = f"{self.run_dir}/client_layer_{layer_id}_epoch_{epoch+1}.pt"
+                save_path = (
+                    f"{self.run_dir}/client_{client_id}_layer_{layer_id}_"
+                    f"epoch_{model_epoch}.pt"
+                )
                 with open(save_path, "wb") as f:
                     f.write(model_data)
                 print("Save path: ", save_path)
 
                 idx = layer_id - 1
                 self.intermediate_model[idx] += 1
-                self.client[client_id][f"model_{epoch+1}"] = save_path
+                self.client[client_id][f"model_{model_epoch}"] = save_path
                 if payload.get('route_batch_counts') is not None:
-                    self.client[client_id][f"route_batch_counts_{epoch+1}"] = {
+                    self.client[client_id][f"route_batch_counts_{model_epoch}"] = {
                         int(cut_layer): int(batch_count)
                         for cut_layer, batch_count in payload['route_batch_counts'].items()
                     }
+
+                if model_epoch != self.epoch:
+                    print(
+                        f"Stored model for future epoch {model_epoch}; "
+                        f"waiting for epoch {self.epoch}."
+                    )
+                    return
+
                 edge_model = self.get_models_by_layer_and_epoch(layer_id=1, epoch=self.epoch)
                 server_model = self.get_models_by_layer_and_epoch(layer_id=2, epoch=self.epoch)
 

@@ -103,6 +103,7 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `cut_layer`: One split index per edge client. A single value is broadcast to the group; otherwise the list length must equal `clients[0]`. Scaled replicas receive values in registration order. The dynamic server starts after the minimum configured cut and routes each intermediate payload according to its client cut (for example `[5, 10]`).
     During aggregation, every global layer is weighted by the number of batches that actually traversed its edge or server copy. This includes overlapping layers that run on the server for earlier cuts and on the edge for later cuts.
     Intermediate payloads carry their global epoch, so faster clients cannot mix next-epoch updates into the current aggregation round.
+    Coordinator checkpoints include both client ID and epoch, preventing replicas at the same layer from overwriting one another.
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 
