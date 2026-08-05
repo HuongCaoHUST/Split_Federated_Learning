@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir \
     pika==1.3.2\
     mlflow\
     prometheus_client\
+    tqdm\
     pandas
 
 CMD ["bash"]
