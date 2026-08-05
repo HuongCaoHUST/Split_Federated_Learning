@@ -1,5 +1,5 @@
 clients:
-  - 8
+  - 4
   - 1
 
 training:
@@ -23,20 +23,12 @@ cut_layer:
   - 10
   - 5
   - 10
-  - 5
-  - 10
-  - 5
-  - 10
 
 dataset:
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
-  - datasets/livingroom_2.yaml
+  - datasets/subdataset/livingroom_2_iid/client_1.yaml
+  - datasets/subdataset/livingroom_2_iid/client_2.yaml
+  - datasets/subdataset/livingroom_2_iid/client_3.yaml
+  - datasets/subdataset/livingroom_2_iid/client_4.yaml
 
 rabbitmq:
   host: 'rabbitmq'

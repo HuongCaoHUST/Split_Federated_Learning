@@ -109,3 +109,27 @@ The main behavior of the system is controlled by `config.yaml`.
 
 
 The trained models and validation results are saved in a `runs` directory created automatically.
+
+## Split the Living Room Dataset
+
+Use `scripts/split_livingroom_dirichlet.py` to create four YOLO client datasets. The
+script keeps each train image with its label, copies the complete `valid` split to
+every client, writes one YAML file per client, and creates a class-distribution
+heatmap.
+
+```bash
+# Non-IID: lower alpha creates stronger label skew
+python scripts/split_livingroom_dirichlet.py \
+  --mode dirichlet --alpha 0.5 --num-clients 4 --seed 42
+
+# IID: balanced random split
+python scripts/split_livingroom_dirichlet.py \
+  --mode iid --alpha 0.5 --num-clients 4 --seed 42 \
+  --output datasets/subdataset/livingroom_2_iid
+```
+
+The generated YAML files and client data are stored below
+`datasets/subdataset/`. Use the corresponding `client_1.yaml` through
+`client_4.yaml` files when launching the four clients. The YAML files use
+relative paths, so the complete output directory can be zipped and extracted
+elsewhere without editing the configurations.
