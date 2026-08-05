@@ -100,7 +100,7 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `training`: Parameters for the training process like `num_epochs`, `num_rounds`, `batch_size`, and `learning_rate`.
 -   `model`: Defines the model architecture.
     -   `pretrained_path`: Path to a pretrained model to start from.
--   `cut_layer`: A list of split indices, for example `[10]`. The current two-part model uses the first index.
+-   `cut_layer`: One split index per client in the model aggregation group. A single value is broadcast to the group; otherwise the list length must equal `clients[0]`. Scaled replicas receive values in registration order. Clients whose model parameters are aggregated together must use compatible model structures, which currently means identical cut-layer values (for example `[10, 10]`).
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 

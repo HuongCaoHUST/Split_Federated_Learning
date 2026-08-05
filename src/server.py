@@ -3,7 +3,12 @@ from ultralytics.data.utils import check_det_dataset
 from model.YOLO11n_custom import YOLO11_Full
 from ultralytics.data.dataset import YOLODataset
 from torch.utils.data import DataLoader
-from src.utils import update_results_csv, create_run_dir, get_cut_layer
+from src.utils import (
+    update_results_csv,
+    create_run_dir,
+    get_client_cut_layers,
+    get_aggregation_cut_layer,
+)
 from src.utils_box import non_max_suppression
 from ultralytics.utils.metrics import ap_per_class, box_iou
 from ultralytics.utils.ops import xywh2xyxy
@@ -27,6 +32,8 @@ class Server:
         self.device = device
         config['rabbitmq']['host']='rabbitmq'
         self.num_client = config['clients']
+        self.client_cut_layers = get_client_cut_layers(config, self.num_client[0])
+        self.cut_layer = get_aggregation_cut_layer(self.client_cut_layers)
         self.datasets = config['dataset']
         self.client = {}
         self.comm = Communication(config)
@@ -43,7 +50,6 @@ class Server:
         self.num_rounds = config['training']['num_rounds']
         self.learning_rate = config['training']['learning_rate']
         self.optimizer_name = config['training'].get('optimizer', 'Adam')
-        self.cut_layer = get_cut_layer(config)
         self.epoch = 1
         self.round = 1 
         self.best_fitness = 0.0
@@ -91,15 +97,33 @@ class Server:
             if action == 'register':
                 layer_id = payload.get('layer_id')
                 client_id = payload.get('client_id')
-                self.client[client_id] = {"layer_id": layer_id}
 
                 if layer_id == 1:
+                    client_index = self.registed[0]
+                    cut_layer = self.client_cut_layers[client_index]
                     self.registed[0] += 1
                 else:
+                    client_index = self.registed[1]
+                    cut_layer = self.cut_layer
                     self.registed[1] += 1
 
+                self.client[client_id] = {
+                    "layer_id": layer_id,
+                    "client_index": client_index,
+                    "cut_layer": cut_layer,
+                }
+                print(
+                    f"Registered layer {layer_id} client #{client_index + 1} "
+                    f"({client_id}) with cut_layer={cut_layer}"
+                )
+
                 if self.registed == self.num_client:
-                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 1), datasets = self.datasets)
+                    edge_client_ids = self.get_client_ids_by_layer(layer_id=1)
+                    self.comm.send_start_message(
+                        edge_client_ids,
+                        datasets=self.datasets,
+                        cut_layers=self.get_cut_layers_by_client_ids(edge_client_ids),
+                    )
 
             elif action == 'send_number_batch':
                 nb = payload.get('nb_train')
@@ -112,7 +136,15 @@ class Server:
                     self.num_classes = self.data_cfg['nc']
                     self.class_names = self.data_cfg['names']
                     nb = self.get_total_nb_by_layer(layer_id = 1)
-                    self.comm.send_start_message(self.get_client_ids_by_layer(layer_id = 2), datasets = None, nb = nb, nc = self.num_classes, class_names = self.class_names)
+                    server_client_ids = self.get_client_ids_by_layer(layer_id=2)
+                    self.comm.send_start_message(
+                        server_client_ids,
+                        datasets=None,
+                        nb=nb,
+                        nc=self.num_classes,
+                        class_names=self.class_names,
+                        cut_layers=self.get_cut_layers_by_client_ids(server_client_ids),
+                    )
 
             elif action == 'update_model':
                 model_data = payload.get('model_data')
@@ -253,6 +285,9 @@ class Server:
             client_id for client_id, info in self.client.items() 
             if layer_id is None or info.get("layer_id") == layer_id
         ]
+
+    def get_cut_layers_by_client_ids(self, client_ids):
+        return [self.client[client_id]["cut_layer"] for client_id in client_ids]
     
     def get_models_by_layer_and_epoch(self, layer_id, epoch):
         key = f"model_{epoch}"

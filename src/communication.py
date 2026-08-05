@@ -136,7 +136,7 @@ class Communication:
         }
         self.publish_message('server_queue', pickle.dumps(payload))
 
-    def send_start_message(self, client_ids = None, datasets = None, nb = None, nc = None, class_names = None):
+    def send_start_message(self, client_ids = None, datasets = None, nb = None, nc = None, class_names = None, cut_layers = None):
         """
         Sends register message to centralized server.
         """
@@ -147,6 +147,8 @@ class Communication:
             if datasets is not None and i < len(datasets):
                 dataset = datasets[i]
                 if dataset is not None: payload['datasets'] = dataset
+            if cut_layers is not None and i < len(cut_layers):
+                payload['cut_layer'] = cut_layers[i]
             if nb is not None and nc is not None:
                 payload['nb'] = nb
                 payload['nc'] = nc

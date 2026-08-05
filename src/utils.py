@@ -157,6 +157,40 @@ def get_cut_layer(config, index=0):
             f"Missing cut_layer at index {index}; configured values: {cut_layers}."
         ) from exc
 
+def get_client_cut_layers(config, num_clients):
+    """Return one cut-layer value for each client in an aggregation group.
+
+    A single configured value is broadcast for backward compatibility. When
+    multiple values are configured, their count must match the group size so
+    the coordinator can assign them in registration order.
+    """
+    if isinstance(num_clients, bool) or not isinstance(num_clients, int) or num_clients < 1:
+        raise ValueError("The number of clients must be a positive integer.")
+
+    cut_layers = get_cut_layers(config)
+    if len(cut_layers) == 1:
+        return cut_layers * num_clients
+    if len(cut_layers) != num_clients:
+        raise ValueError(
+            "The number of 'cut_layer' values must be 1 or match the number "
+            f"of clients ({num_clients}); configured values: {cut_layers}."
+        )
+    return cut_layers
+
+def get_aggregation_cut_layer(cut_layers):
+    """Return the cut layer shared by model-compatible aggregation members."""
+    if not cut_layers:
+        raise ValueError("At least one cut_layer is required for aggregation.")
+
+    aggregation_cut_layer = cut_layers[0]
+    incompatible = [value for value in cut_layers if value != aggregation_cut_layer]
+    if incompatible:
+        raise ValueError(
+            "Clients whose model parameters are aggregated together must use "
+            f"compatible cut layers; configured values: {cut_layers}."
+        )
+    return aggregation_cut_layer
+
 def load_config_and_setup(config_path, project_root):
     """
     Tải cấu hình, thiết lập device và trả về các thông số.
