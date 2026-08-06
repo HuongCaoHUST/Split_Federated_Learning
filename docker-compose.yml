@@ -94,6 +94,28 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+  centralized: &centralized-service
+    profiles: ["centralized"]
+    build: .
+    image: cnn_training:latest
+    volumes:
+      - ${PWD}:/workspace
+    command:
+      - python
+      - train_centralized.py
+      - --config
+      - ${CENTRALIZED_CONFIG:-config_centralized.yaml}
+    shm_size: '4gb'
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  centralized-gpu:
+    <<: *centralized-service
+    profiles: ["centralized-gpu"]
+    gpus: all
+
 volumes:
   rabbitmq_data:
     driver: local

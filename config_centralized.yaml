@@ -1,0 +1,32 @@
+# Full YOLO dataset configuration (must contain train, val, nc and names).
+dataset:
+  yaml: datasets/livingroom_2.yaml
+
+model:
+  # Use "none" to train from random initialization.
+  pretrained: yolo11n.pt
+
+training:
+  epochs: 100
+  batch_size: 8
+  image_size: 640
+  learning_rate: 0.001
+  optimizer: Adam  # SGD, Adam or AdamW
+  momentum: 0.937
+  weight_decay: 0.0005
+  num_workers: 4
+  device: auto  # auto, cpu, cuda, cuda:0 or 0
+
+validation:
+  confidence_threshold: 0.001
+  iou_threshold: 0.7
+
+mlflow:
+  tracking_uri: http://smart-hvac.io.vn:5005/
+  experiment_name: Centralized_YOLO11
+  run_name: null  # null creates a timestamped run name
+
+output:
+  directory: null  # null -> runs/centralized/<run-name>
+
+seed: 0

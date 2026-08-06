@@ -19,3 +19,6 @@ datasets/*
 /results/*
 /.venv/
 /train_results
+*.csv
+*.zip
+/runs

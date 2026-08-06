@@ -7,7 +7,7 @@ training:
   num_rounds: 4
   batch_size: 8
   learning_rate: 0.001
-  optimizer: 'SGD' # Adam or SGD
+  optimizer: 'Adam' # Adam or SGD
   momentum: 0.9
   num_workers: 0
 

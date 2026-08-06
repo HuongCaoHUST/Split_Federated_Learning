@@ -107,8 +107,102 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 
+## Centralized YOLO11 baseline
 
-The trained models and validation results are saved in a `runs` directory created automatically.
+The centralized trainer uses `model.YOLO11_Full` directly with the complete
+dataset. After each epoch, it logs the following metrics to MLflow:
+
+- Training and validation `box_loss`, `cls_loss`, and `dfl_loss`.
+- Precision, Recall, mAP50, and mAP50-95.
+
+### 1. Configuration
+
+Edit the parameters in `config_centralized.yaml` before starting. At minimum,
+set the correct path to the full dataset YAML:
+
+```yaml
+dataset:
+  yaml: datasets/full.yaml
+
+training:
+  epochs: 100
+  batch_size: 8
+  device: auto
+
+mlflow:
+  tracking_uri: http://smart-hvac.io.vn:5005/
+  experiment_name: Centralized_YOLO11
+```
+
+The dataset YAML must use the YOLO format and contain `train`, `val`, `nc`, and
+`names`. Relative paths in `config_centralized.yaml` are resolved from the
+directory containing the configuration file.
+
+### 2. Build the Docker image
+
+From the repository root, run:
+
+```bash
+docker compose --profile centralized build centralized
+```
+
+Rebuild the image only when the Dockerfile or dependencies change.
+
+### 3. Run on CPU
+
+Set `training.device: cpu` in `config_centralized.yaml`, then run:
+
+```bash
+docker compose --profile centralized run --rm centralized
+```
+
+### 4. Run on an NVIDIA GPU
+
+The host must have an NVIDIA driver and the NVIDIA Container Toolkit installed.
+Set `training.device: cuda:0` or `training.device: auto`, then run:
+
+```bash
+docker compose --profile centralized-gpu run --rm centralized-gpu
+```
+
+### 5. Use a different configuration file
+
+You can keep multiple experiment configurations and select one at runtime
+without editing `docker-compose.yml`:
+
+```bash
+CENTRALIZED_CONFIG=config_centralized_experiment_2.yaml \
+docker compose --profile centralized-gpu run --rm centralized-gpu
+```
+
+### 6. Results
+
+When `output.directory` is `null`, results are saved automatically under:
+
+```text
+runs/centralized/<run-name>/
+├── best.pt
+├── last.pt
+└── metrics.csv
+```
+
+`metrics.csv`, `best.pt`, `last.pt`, and the dataset YAML are also uploaded as
+MLflow artifacts after training finishes.
+
+The trainer can also run directly without Docker:
+
+```bash
+python train_centralized.py --config config_centralized.yaml
+```
+
+CLI arguments take precedence over YAML values when a quick override is needed:
+
+```bash
+python train_centralized.py \
+  --config config_centralized.yaml \
+  --epochs 10 \
+  --device cpu
+```
 
 ## Split the Living Room Dataset
 
