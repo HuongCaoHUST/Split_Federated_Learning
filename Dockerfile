@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir \
     mlflow\
     prometheus_client\
     tqdm\
-    pandas
+    pandas\
+    rich
 
 CMD ["bash"]

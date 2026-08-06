@@ -19,16 +19,16 @@ model:
   pretrained_path: './yolo11n.pt'
 
 cut_layer: 
-  - 5
-  - 10
-  - 5
+  - 15
+  - 15
+  - 15
   - 10
 
 dataset:
-  - datasets/subdataset/livingroom_2_iid/client_1.yaml
-  - datasets/subdataset/livingroom_2_iid/client_2.yaml
-  - datasets/subdataset/livingroom_2_iid/client_3.yaml
-  - datasets/subdataset/livingroom_2_iid/client_4.yaml
+  - datasets/subdataset/livingroom_2_dirichlet_alpha_0p5/client_1.yaml
+  - datasets/subdataset/livingroom_2_dirichlet_alpha_0p5/client_2.yaml
+  - datasets/subdataset/livingroom_2_dirichlet_alpha_0p5/client_3.yaml
+  - datasets/subdataset/livingroom_2_dirichlet_alpha_0p5/client_4.yaml
 
 rabbitmq:
   host: 'rabbitmq'

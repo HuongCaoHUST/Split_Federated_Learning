@@ -17,6 +17,7 @@ from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils.loss import v8DetectionLoss
 from src.mlflow import MLflowConnector
 from src.monitoring import DeviceMonitor
+from scripts.draw import draw_graph
 import numpy as np
 from tqdm import tqdm
 import pickle
@@ -40,6 +41,7 @@ class Server:
         self.registed = [0,0]
         self.metadata_clients = set()
         self.server_workers_started = False
+        self.graph_drawn = False
         self.run_dir = create_run_dir('./', layer_id = 0)
         self.intermediate_model = [0,0]
         self.intermediate_model_layer_1 = []
@@ -146,6 +148,9 @@ class Server:
                     client_id in self.metadata_clients
                     for client_id in edge_client_ids
                 )
+                if all_edge_metadata_received:
+                    self.draw_client_graph()
+
                 if all_edge_metadata_received and not self.server_workers_started:
                     self.data_cfg = check_det_dataset(self.datasets[0])
                     self.num_classes = self.data_cfg['nc']
@@ -365,6 +370,38 @@ class Server:
     
     def get_total_nb_by_layer(self, layer_id):
         return sum(info.get("nb_train", 0) for info in self.client.values() if info.get("layer_id") == layer_id)
+
+    def draw_client_graph(self):
+        if self.graph_drawn:
+            return
+
+        edge_client_ids = sorted(
+            self.get_client_ids_by_layer(layer_id=1),
+            key=lambda client_id: self.client[client_id]["client_index"],
+        )
+        if len(edge_client_ids) != self.num_client[0]:
+            return
+
+        if any(
+            self.client[client_id].get("nb_train") is None
+            for client_id in edge_client_ids
+        ):
+            return
+
+        client_data = [
+            {
+                "name": f"Client {self.client[client_id]['client_index'] + 1}",
+                "cut_layer": self.client[client_id]["cut_layer"],
+                "image_count": self.client[client_id]["nb_train"],
+            }
+            for client_id in edge_client_ids
+        ]
+
+        try:
+            draw_graph(client_data)
+            self.graph_drawn = True
+        except Exception as error:
+            print(f"Could not draw client graph: {error}")
     
     @staticmethod
     def _load_checkpoint_state(path):
