@@ -180,6 +180,21 @@ class YOLO11_Full(nn.Module):
         x = self.layers[3](x)
         p3 = self.layers[4](x)   # Save P3
         x = self.layers[5](p3)
+
+        return self.forward_from_cut5([p3, x])
+
+    def forward_from_cut5(self, client_outputs):
+        """Run layers 6..23 from the two cut-5 boundary activations.
+
+        The instance still owns the *full* canonical model. Layers 0..5 are
+        deliberately not executed here: their activations were produced by an
+        edge replica. This lets a server own one optimizer state for every
+        canonical layer while keeping split forward/backward computation.
+        """
+        if not isinstance(client_outputs, (list, tuple)) or len(client_outputs) != 2:
+            raise ValueError("cut-5 execution expects [layer_4_output, layer_5_output].")
+
+        p3, x = client_outputs
         p4 = self.layers[6](x)   # Save P4
         x = self.layers[7](p4)
         x = self.layers[8](x)

@@ -92,6 +92,55 @@ The training process requires one server instance and multiple client instances 
     
     *Note: If you configure more clients in `config.yaml`, you will need to open more terminals to run them.*
 
+## Canonical-gradient baseline: uniform cut 5
+
+`config_canonical_cut5.yaml` is a deliberately narrow correctness baseline for
+one edge and one server worker.  It uses a **single full YOLO11 model and a
+single optimizer on the server**.  The edge only executes layers `0..5`, then
+sends the two boundary activations; after receiving their gradients, it sends
+the edge-prefix gradients back to the server.  The server installs those
+gradients into its canonical full model and calls `optimizer.step()` exactly
+once per batch.
+
+This is therefore not model averaging and must not be used with more than one
+edge yet.  It is intended to verify that splitting at layer 5 changes only the
+place of computation, not the mathematical update.
+
+First run the local numerical check (it uses a synthetic detection batch and
+does not require RabbitMQ):
+
+```bash
+python verify_canonical_cut5.py
+```
+
+Expected output includes `Canonical cut-5 verification PASSED` and zero
+difference for the loss, gradients, and post-step state.  To run the actual
+one-edge/one-server experiment, start RabbitMQ and then use three terminals:
+
+```bash
+python main.py --layer_id 0 --config config_canonical_cut5.yaml
+python main.py --layer_id 1 --config config_canonical_cut5.yaml
+python main.py --layer_id 2 --config config_canonical_cut5.yaml
+```
+
+The coordinator validates the final checkpoint as a normal full `YOLO11_Full`
+model.  For a fair accuracy comparison, hold pretrained checkpoint, data split,
+batch order, optimizer, learning rate, augmentation, and number of optimizer
+steps fixed; compare this experiment with an unsplit full-model run.  The
+implementation currently rejects any cut other than `[5]` or any client shape
+other than `[1, 1]` rather than silently applying an invalid aggregation rule.
+
+Alternatively, Docker Compose can start all three workers and RabbitMQ with the
+canonical configuration:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.canonical-cut5.yml up --build
+```
+
+Use `Ctrl-C` to stop the foreground run.  The command uses
+`config_canonical_cut5.yaml`; the normal `docker-compose.yml` remains the
+dynamic-cut configuration.
+
 ## Configuration
 
 The main behavior of the system is controlled by `config.yaml`.

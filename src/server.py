@@ -10,6 +10,10 @@ from src.utils import (
     get_server_cut_layer,
 )
 from src.utils_box import non_max_suppression
+from src.canonical_gradient import (
+    CANONICAL_GRADIENT_QUEUE,
+    validate_canonical_cut5_config,
+)
 from ultralytics.utils.metrics import ap_per_class, box_iou
 from ultralytics.utils.ops import xywh2xyxy
 from ultralytics.cfg import get_cfg
@@ -34,6 +38,11 @@ class Server:
         self.num_client = config['clients']
         self.client_cut_layers = get_client_cut_layers(config, self.num_client[0])
         self.cut_layer = get_server_cut_layer(self.client_cut_layers)
+        self.canonical_gradient_mode = config['training'].get(
+            'canonical_gradient_mode', False
+        )
+        if self.canonical_gradient_mode:
+            validate_canonical_cut5_config(config)
         self.datasets = config['dataset']
         self.client = {}
         self.comm = Communication(config)
@@ -84,9 +93,12 @@ class Server:
             'server_queue',
             'intermediate_queue',
             'gradient_queue',
+            CANONICAL_GRADIENT_QUEUE,
         ])
         self.comm.create_queue('intermediate_queue')
         self.comm.create_queue('server_queue')
+        if self.canonical_gradient_mode:
+            self.comm.create_queue(CANONICAL_GRADIENT_QUEUE)
         # self.monitor = DeviceMonitor(run_id=self.run_id, gateway_url='14.225.254.18:9091')
         # self.monitor.start()
 
@@ -242,11 +254,22 @@ class Server:
                     print("Edge model: ", edge_model)
                     print("Server model: ", server_model)
                     
-                    self.model = self.merged_model(
-                        model_full,
-                        edge_models_list=edge_model,
-                        server_models_list=server_model,
-                    ).to(self.device)
+                    if self.canonical_gradient_mode:
+                        # In canonical-gradient mode the server checkpoint is
+                        # already the complete canonical YOLO11 state. The edge
+                        # checkpoint only acts as a completion signal and is
+                        # intentionally not averaged a second time.
+                        canonical_state = self._load_checkpoint_state(
+                            server_model[0]['path']
+                        )
+                        model_full.load_state_dict(canonical_state, strict=True)
+                        self.model = model_full.to(self.device)
+                    else:
+                        self.model = self.merged_model(
+                            model_full,
+                            edge_models_list=edge_model,
+                            server_models_list=server_model,
+                        ).to(self.device)
 
                     self.data_cfg = check_det_dataset(self.datasets[0])
                     self.model.names = self.data_cfg['names']

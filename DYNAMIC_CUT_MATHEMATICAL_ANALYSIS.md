@@ -258,6 +258,31 @@ Uniform cut tạo bước nhảy `0 -> 1`; dynamic tạo staircase `0 -> 0.25 ->
 
 Dynamic hiện tại là hybrid layer-wise giữa FL-style local training và centralized sequential training. Không có định lý tổng quát rằng hybrid này luôn chính xác hơn uniform cut.
 
+## 9. Baseline hướng B: canonical-gradient split
+
+Tệp `config_canonical_cut5.yaml` triển khai baseline kiểm chứng cho **một edge,
+một server, uniform cut `5`**. Server giữ một `YOLO11_Full` canonical và một
+optimizer duy nhất. Với mỗi batch:
+
+```text
+edge forward (layers 0..5)
+  -> server forward/backward (layers 6..23)
+  -> edge backward (layers 0..5)
+  -> server cài gradient prefix + BN buffers
+  -> server optimizer.step() đúng một lần
+```
+
+Vì tất cả gradient được đánh giá tại cùng `W^t` và optimizer chỉ step một lần,
+update bằng full-model training cho cùng batch (trong sai số số học). Script
+`verify_canonical_cut5.py` kiểm tra loss, mọi gradient và state sau một SGD step
+trên synthetic YOLO batch; kết quả mong đợi là sai khác bằng 0.
+
+Baseline này chưa mở rộng sang nhiều edge hay nhiều cut. Với nhiều edge, server
+phải đợi gradient prefix/suffix của toàn bộ client được tính từ cùng snapshot,
+weight theo số sample, aggregate từng canonical layer rồi mới step một lần. Đó
+là phần cần thiết để chứng minh cut-invariance cho dynamic cut, không phải chỉ
+nhân bản protocol hiện tại theo số client.
+
 ## 9. Bảo đảm toán học về system cost
 
 Gọi `C={5,10,15,20}`. Uniform search space là:

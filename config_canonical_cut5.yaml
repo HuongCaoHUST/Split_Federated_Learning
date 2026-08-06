@@ -1,0 +1,34 @@
+# Correctness baseline for the canonical-gradient split mode.
+# Exactly one edge and one server worker; uniform cut after layer 5.
+clients:
+  - 1
+  - 1
+
+training:
+  num_epochs: 2
+  num_rounds: 1
+  batch_size: 8
+  learning_rate: 0.001
+  optimizer: 'Adam'
+  momentum: 0.9
+  num_workers: 0
+  canonical_gradient_mode: true
+
+model:
+  edge: 'YOLO11_EDGE_5'
+  server: 'YOLO11_Full'
+  save_path: 'canonical_cut5.pt'
+  save_model: true
+  pretrained_path: './yolo11n.pt'
+
+cut_layer:
+  - 5
+
+dataset:
+  - datasets/subdataset/livingroom_2_iid/client_1.yaml
+
+rabbitmq:
+  host: 'rabbitmq'
+  port: 5672
+  username: 'guest'
+  password: 'guest'

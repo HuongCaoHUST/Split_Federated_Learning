@@ -8,10 +8,15 @@ import uuid
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a CNN model.')
     parser.add_argument('--layer_id', type=int, default=-1, help='Layer ID for training.')
+    parser.add_argument(
+        '--config',
+        default='config.yaml',
+        help='Path to the YAML configuration file (default: config.yaml).',
+    )
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
-    config, device = load_config_and_setup("./config.yaml", project_root)
+    config, device = load_config_and_setup(args.config, project_root)
     client_id = uuid.uuid4().hex[:8]
     if args.layer_id == 1:
         Client(config, device, project_root, args.layer_id, client_id)
@@ -20,4 +25,3 @@ if __name__ == '__main__':
     elif args.layer_id == 0:
         server = Server(config, device)
         server.run()
-        

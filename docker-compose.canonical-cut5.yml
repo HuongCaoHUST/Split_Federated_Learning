@@ -1,0 +1,12 @@
+# Compose override for the one-edge/one-server canonical-gradient baseline.
+# Run with the base file so RabbitMQ and all shared service settings remain the
+# same as the normal dynamic-cut experiment.
+services:
+  server:
+    command: ["python", "main.py", "--layer_id", "0", "--config", "config_canonical_cut5.yaml"]
+
+  torch_1:
+    command: ["python", "main.py", "--layer_id", "1", "--config", "config_canonical_cut5.yaml"]
+
+  torch_2:
+    command: ["python", "main.py", "--layer_id", "2", "--config", "config_canonical_cut5.yaml"]
