@@ -2,7 +2,9 @@
 
 The split is performed at image level, so an image and its label file always
 stay together and cannot be assigned to more than one client. The validation
-split is copied unchanged to every client.
+split is copied unchanged to every client. Both the conventional
+``train/images`` layout and the converted Pascal VOC layout
+``images/{train2007,train2012,...}`` are supported.
 """
 
 from __future__ import annotations
@@ -30,6 +32,13 @@ import matplotlib.pyplot as plt
 
 
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+VOC_DEFAULT_TRAIN_SPLITS = (
+    "train2007",
+    "val2007",
+    "train2012",
+    "val2012",
+)
+VOC_DEFAULT_VAL_SPLITS = ("test2007",)
 
 
 @dataclass(frozen=True)
@@ -112,11 +121,52 @@ def read_label_classes(label_path: Path) -> tuple[int, ...]:
     return tuple(class_ids)
 
 
-def load_samples(source_dir: Path) -> tuple[list[Sample], list[Path], list[Path], list[str]]:
+def normalize_source_dir(source_dir: Path) -> Path:
+    """Accept either the dataset root or its ``images`` directory."""
+    source_dir = source_dir.resolve()
+    looks_like_voc_images = any(
+        (source_dir / split_name).is_dir()
+        for split_name in (
+            *VOC_DEFAULT_TRAIN_SPLITS,
+            *VOC_DEFAULT_VAL_SPLITS,
+        )
+    )
+    if (
+        source_dir.name == "images"
+        and (
+            (source_dir.parent / "labels").is_dir()
+            or looks_like_voc_images
+        )
+    ):
+        return source_dir.parent
+    return source_dir
+
+
+def _image_files(directory: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+    )
+
+
+def _validate_unique_names(paths: list[Path], description: str) -> None:
+    names = [path.name for path in paths]
+    duplicates = sorted(
+        name for name, count in Counter(names).items() if count > 1
+    )
+    if duplicates:
+        raise ValueError(
+            f"Duplicate {description} filenames across splits: {duplicates[:5]}. "
+            "Client output uses a flat image directory, so filenames must be unique."
+        )
+
+
+def _load_flat_yolo_samples(
+    source_dir: Path,
+) -> tuple[list[Sample], list[Path], list[Path], list[str]]:
     train_images_dir = source_dir / "train" / "images"
     train_labels_dir = source_dir / "train" / "labels"
-    if not train_images_dir.is_dir() or not train_labels_dir.is_dir():
-        raise FileNotFoundError("Expected train/images and train/labels under the source dataset")
 
     validation_name = "valid" if (source_dir / "valid").is_dir() else "val"
     validation_dir = source_dir / validation_name
@@ -125,9 +175,7 @@ def load_samples(source_dir: Path) -> tuple[list[Sample], list[Path], list[Path]
     if not validation_images_dir.is_dir() or not validation_labels_dir.is_dir():
         raise FileNotFoundError("Expected valid/images and valid/labels, or val/images and val/labels")
 
-    train_images = sorted(
-        path for path in train_images_dir.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
-    )
+    train_images = _image_files(train_images_dir)
     if not train_images:
         raise FileNotFoundError("No train images were found")
 
@@ -138,9 +186,7 @@ def load_samples(source_dir: Path) -> tuple[list[Sample], list[Path], list[Path]
             raise FileNotFoundError(f"Missing label for image: {image_path}")
         samples.append(Sample(image_path, label_path, read_label_classes(label_path)))
 
-    validation_images = sorted(
-        path for path in validation_images_dir.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
-    )
+    validation_images = _image_files(validation_images_dir)
     validation_labels = []
     for image_path in validation_images:
         label_path = validation_labels_dir / f"{image_path.stem}.txt"
@@ -161,6 +207,113 @@ def load_samples(source_dir: Path) -> tuple[list[Sample], list[Path], list[Path]
         raise ValueError(f"Class ids {invalid_ids} do not fit the dataset class names")
 
     return samples, validation_images, validation_labels, class_names
+
+
+def _resolve_voc_split_dir(root: Path, kind: str, split_name: str) -> Path:
+    split_path = Path(split_name)
+    candidates = []
+    if split_path.is_absolute():
+        candidates.append(split_path)
+    else:
+        candidates.extend(
+            [
+                root / split_path,
+                root / kind / split_path,
+            ]
+        )
+        if split_path.parts and split_path.parts[0] in ("images", "labels"):
+            candidates.insert(0, root / split_path)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        f"Could not resolve VOC {kind} split '{split_name}' under {root}."
+    )
+
+
+def _load_voc_samples(
+    source_dir: Path,
+    train_splits: tuple[str, ...],
+    val_splits: tuple[str, ...],
+) -> tuple[list[Sample], list[Path], list[Path], list[str]]:
+    images_root = source_dir / "images"
+    labels_root = source_dir / "labels"
+    if not images_root.is_dir() or not labels_root.is_dir():
+        raise FileNotFoundError(
+            "VOC layout requires sibling images/ and labels/ directories. "
+            "Run the VOC XML-to-YOLO conversion before splitting."
+        )
+
+    train_images = []
+    validation_images = []
+    for split_name in train_splits:
+        train_images.extend(
+            _image_files(_resolve_voc_split_dir(source_dir, "images", split_name))
+        )
+    for split_name in val_splits:
+        validation_images.extend(
+            _image_files(_resolve_voc_split_dir(source_dir, "images", split_name))
+        )
+    if not train_images:
+        raise FileNotFoundError("No VOC training images were found.")
+    if not validation_images:
+        raise FileNotFoundError("No VOC validation images were found.")
+    _validate_unique_names(train_images, "training image")
+    _validate_unique_names(validation_images, "validation image")
+
+    def label_for_image(image_path: Path) -> Path:
+        relative_split = image_path.parent.relative_to(images_root)
+        label_path = labels_root / relative_split / f"{image_path.stem}.txt"
+        if not label_path.is_file():
+            raise FileNotFoundError(f"Missing VOC YOLO label for image: {image_path}")
+        return label_path
+
+    samples = [
+        Sample(image_path, label_for_image(image_path), read_label_classes(label_for_image(image_path)))
+        for image_path in train_images
+    ]
+    validation_labels = [label_for_image(image_path) for image_path in validation_images]
+    observed_class_ids = {
+        class_id for sample in samples for class_id in sample.class_ids
+    }
+    observed_class_ids.update(
+        class_id
+        for label_path in validation_labels
+        for class_id in read_label_classes(label_path)
+    )
+    class_names = load_class_names(source_dir, observed_class_ids)
+    invalid_ids = sorted(
+        class_id
+        for class_id in observed_class_ids
+        if class_id >= len(class_names)
+    )
+    if invalid_ids:
+        raise ValueError(f"VOC class ids do not fit class names: {invalid_ids}.")
+    return samples, validation_images, validation_labels, class_names
+
+
+def load_samples(
+    source_dir: Path,
+    train_splits: tuple[str, ...] | None = None,
+    val_splits: tuple[str, ...] | None = None,
+) -> tuple[list[Sample], list[Path], list[Path], list[str]]:
+    source_dir = normalize_source_dir(source_dir)
+    is_flat_yolo = (
+        (source_dir / "train" / "images").is_dir()
+        and (source_dir / "train" / "labels").is_dir()
+    )
+    if is_flat_yolo:
+        if train_splits is not None or val_splits is not None:
+            raise ValueError(
+                "--train-splits/--val-splits are only valid for VOC layout."
+            )
+        return _load_flat_yolo_samples(source_dir)
+
+    return _load_voc_samples(
+        source_dir,
+        train_splits or VOC_DEFAULT_TRAIN_SPLITS,
+        val_splits or VOC_DEFAULT_VAL_SPLITS,
+    )
 
 
 def iid_partition(sample_count: int, num_clients: int, rng: np.random.Generator) -> list[list[int]]:
@@ -332,6 +485,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--alpha", type=positive_float, default=0.5)
     parser.add_argument("--mode", choices=("iid", "dirichlet"), default="dirichlet")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--train-splits",
+        nargs="+",
+        default=None,
+        help="VOC image split directories used for training.",
+    )
+    parser.add_argument(
+        "--val-splits",
+        nargs="+",
+        default=None,
+        help="VOC image split directories copied as shared validation data.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -341,7 +506,7 @@ def main() -> None:
     if args.num_clients < 1:
         raise ValueError("num-clients must be at least one")
 
-    source_dir = args.source.resolve()
+    source_dir = normalize_source_dir(args.source)
     if not source_dir.is_dir():
         raise FileNotFoundError(f"Source dataset does not exist: {source_dir}")
 
@@ -353,7 +518,11 @@ def main() -> None:
     output_dir = output_dir.resolve()
     ensure_output_is_safe(source_dir, output_dir)
 
-    samples, validation_images, validation_labels, class_names = load_samples(source_dir)
+    samples, validation_images, validation_labels, class_names = load_samples(
+        source_dir,
+        train_splits=tuple(args.train_splits) if args.train_splits else None,
+        val_splits=tuple(args.val_splits) if args.val_splits else None,
+    )
     rng = np.random.default_rng(args.seed)
     if args.mode == "iid":
         partitions = iid_partition(len(samples), args.num_clients, rng)
@@ -376,6 +545,8 @@ def main() -> None:
         "alpha": args.alpha,
         "seed": args.seed,
         "num_clients": args.num_clients,
+        "train_splits": args.train_splits,
+        "val_splits": args.val_splits,
         "train_images": len(samples),
         "validation_images_per_client": len(validation_images),
         "client_train_images": [len(indices) for indices in partitions],

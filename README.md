@@ -204,7 +204,7 @@ python train_centralized.py \
   --device cpu
 ```
 
-## Split the Living Room Dataset
+## Split detection datasets (Living Room or Pascal VOC)
 
 Use `scripts/split_livingroom_dirichlet.py` to create four YOLO client datasets. The
 script keeps each train image with its label, copies the complete `valid` split to
@@ -227,3 +227,31 @@ The generated YAML files and client data are stored below
 `client_4.yaml` files when launching the four clients. The YAML files use
 relative paths, so the complete output directory can be zipped and extracted
 elsewhere without editing the configurations.
+
+The same script auto-detects a converted Pascal VOC directory containing
+`images/` and `labels/` with year-specific split folders. It accepts either
+the VOC root or its `images` directory:
+
+```bash
+# VOC/Ultralytics default: train+val 2007/2012; shared validation: test2007
+python scripts/split_livingroom_dirichlet.py \
+  --source datasets/VOC/images \
+  --mode dirichlet --alpha 0.5 --num-clients 4 --seed 42 \
+  --output datasets/subdataset/VOC_dirichlet_alpha_0p5
+```
+
+To use only the folders named `train*` for training and both `val*` folders as
+shared validation, select the splits explicitly:
+
+```bash
+python scripts/split_livingroom_dirichlet.py \
+  --source datasets/VOC \
+  --train-splits train2007 train2012 \
+  --val-splits val2007 val2012 \
+  --mode dirichlet --alpha 0.5 --num-clients 4 --seed 42 \
+  --output datasets/subdataset/VOC_ultralytics_dirichlet
+```
+
+VOC annotations must already be converted to YOLO text files under
+`labels/<split>/`; the script will report the exact missing label if conversion
+is incomplete.
