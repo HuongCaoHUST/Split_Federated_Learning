@@ -29,7 +29,7 @@ services:
       - ${PWD}:/workspace
     tty: true
     stdin_open: true
-    command: ["python", "main.py", "--layer_id", "0"]
+    command: ["python", "main.py", "--layer_id", "0", "--config", "${SFL_CONFIG:-config.yaml}"]
     shm_size: '4gb'
     ulimits:
       nofile:
@@ -54,7 +54,7 @@ services:
       - ${PWD}:/workspace
     tty: true
     stdin_open: true
-    command: ["python", "main.py", "--layer_id", "1"]
+    command: ["python", "main.py", "--layer_id", "1", "--config", "${SFL_CONFIG:-config.yaml}"]
     shm_size: '4gb'
     ulimits:
       nofile:
@@ -80,7 +80,7 @@ services:
       - ${PWD}:/workspace
     tty: true
     stdin_open: true
-    command: ["python", "main.py", "--layer_id", "2"]
+    command: ["python", "main.py", "--layer_id", "2", "--config", "${SFL_CONFIG:-config.yaml}"]
     shm_size: '4gb'
     ulimits:
       nofile:

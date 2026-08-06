@@ -19,20 +19,20 @@ def _get_range(row_values, segments):
     return active_segments[0][0], active_segments[-1][1]
 
 
-def _draw_line(start, end, row_values, segments, max_layer):
-    width = max_layer * SCALE
+def _draw_line(start, end, row_values, segments, max_layer, scale=SCALE):
+    width = max_layer * scale
     characters = [" "] * (width + 1)
 
-    start_position = start * SCALE
-    end_position = end * SCALE
+    start_position = start * scale
+    end_position = end * scale
     characters[start_position] = "├"
 
     for (segment_start, segment_end), value in zip(segments, row_values):
         if segment_end <= start or segment_start >= end:
             continue
 
-        segment_start_position = max(segment_start, start) * SCALE
-        segment_end_position = min(segment_end, end) * SCALE
+        segment_start_position = max(segment_start, start) * scale
+        segment_end_position = min(segment_end, end) * scale
 
         for index in range(segment_start_position + 1, segment_end_position + 1):
             characters[index] = "─"
@@ -48,17 +48,17 @@ def _draw_line(start, end, row_values, segments, max_layer):
     return "".join(characters)
 
 
-def _draw_guides(segments, max_layer):
-    width = max_layer * SCALE
+def _draw_guides(segments, max_layer, scale=SCALE):
+    width = max_layer * scale
     characters = [" "] * (width + 1)
 
     for _, segment_end in segments:
-        characters[segment_end * SCALE] = "┆"
+        characters[segment_end * scale] = "┆"
 
     return "".join(characters)
 
 
-def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None):
+def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None, scale=SCALE):
     """Draw the split-learning graph for the registered edge clients.
 
     Each item in ``client_data`` must contain ``cut_layer`` and
@@ -68,14 +68,16 @@ def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None):
         raise ValueError("At least one client is required to draw the graph.")
     if max_layer < 1:
         raise ValueError("max_layer must be positive.")
+    if scale < 2:
+        raise ValueError("scale must be at least 2.")
 
     clients = []
     for index, client in enumerate(client_data, start=1):
         cut_layer = int(client["cut_layer"])
         image_count = int(client["image_count"])
-        if not 0 < cut_layer <= max_layer:
+        if not 0 <= cut_layer <= max_layer:
             raise ValueError(
-                f"Client cut layer must be between 1 and {max_layer}; "
+                f"Client cut layer must be between 0 and {max_layer}; "
                 f"received {cut_layer}."
             )
         if image_count < 0:
@@ -86,21 +88,19 @@ def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None):
             "image_count": image_count,
         })
 
-    segment_ends = sorted({client["cut_layer"] for client in clients} | {max_layer})
+    segment_ends = sorted(
+        ({client["cut_layer"] for client in clients} | {max_layer}) - {0}
+    )
     segments = list(zip([0] + segment_ends[:-1], segment_ends))
 
     server_values = []
     for segment_start, _ in segments:
-        if segment_start == 0:
-            server_values.append(None)
-            continue
-        server_values.append(
-            sum(
-                client["image_count"]
-                for client in clients
-                if client["cut_layer"] <= segment_start
-            )
+        image_count = sum(
+            client["image_count"]
+            for client in clients
+            if client["cut_layer"] <= segment_start
         )
+        server_values.append(image_count if image_count else None)
 
     rows = [("Server", server_values)]
     for client in clients:
@@ -118,16 +118,23 @@ def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None):
 
     table.add_row(
         "Full model",
-        _draw_line(0, max_layer, [None] * len(segments), segments, max_layer),
+        _draw_line(
+            0,
+            max_layer,
+            [None] * len(segments),
+            segments,
+            max_layer,
+            scale,
+        ),
     )
-    guide = _draw_guides(segments, max_layer)
+    guide = _draw_guides(segments, max_layer, scale)
     table.add_row("", guide)
 
     for name, row_values in rows:
         start, end = _get_range(row_values, segments)
         table.add_row(
             name,
-            _draw_line(start, end, row_values, segments, max_layer),
+            _draw_line(start, end, row_values, segments, max_layer, scale),
         )
         table.add_row("", guide)
 
@@ -136,9 +143,9 @@ def draw_graph(client_data, max_layer=DEFAULT_MAX_LAYER, output=None):
     output.print(table)
 
     number_offset = column_width + 2
-    number_line = [" "] * (max_layer * SCALE + number_offset + 2)
+    number_line = [" "] * (max_layer * scale + number_offset + 2)
     for layer in [0] + segment_ends:
-        position = number_offset + layer * SCALE
+        position = number_offset + layer * scale
         layer_label = str(layer)
         number_line[position:position + len(layer_label)] = layer_label
     output.print("".join(number_line))

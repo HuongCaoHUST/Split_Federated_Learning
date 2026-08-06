@@ -1,0 +1,55 @@
+task: classification
+
+clients:
+  - 4  # AlexNet edge workers
+  - 1  # Dynamic AlexNet server workers
+
+training:
+  num_epochs: 1
+  num_rounds: 2
+  batch_size: 64
+  learning_rate: 0.0001
+  optimizer: Adam
+  weight_decay: 0.0001
+  momentum: 0.9
+  num_workers: 2
+
+model:
+  name: AlexNet
+  num_classes: 10
+  seed: 42
+  save_model: true
+
+# One inclusive AlexNet stage index for each edge worker. Valid cuts are 0..7.
+cut_layer:
+  - 1
+  - 2
+  - 3
+  - 4
+
+dataset:
+  name: MNIST
+  root: data
+  split_dir: data/mnist_splits/mnist_dirichlet_alpha_0p5
+  auto_create_split: true
+  split_mode: dirichlet
+  dirichlet_alpha: 0.5
+  input_size: 224
+  download: true
+  split_seed: 42
+  subset_fraction: 1.0
+
+mlflow:
+  enabled: false
+  tracking_uri: http://smart-hvac.io.vn:5005/
+  experiment_name: SFL_AlexNet_MNIST
+
+rabbitmq:
+  host: rabbitmq
+  port: 5672
+  username: guest
+  password: guest
+  max_retries: 5
+  retry_delay: 5
+
+startup_delay: 5

@@ -1,6 +1,85 @@
 from collections import OrderedDict
 
+import torch
 import torch.nn as nn
+
+
+def _build_stage(layer_index, num_classes):
+    stages = {
+        0: lambda: nn.Sequential(
+            nn.Conv2d(3, 96, kernel_size=11, stride=4, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        ),
+        1: lambda: nn.Sequential(
+            nn.Conv2d(96, 256, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        ),
+        2: lambda: nn.Sequential(
+            nn.Conv2d(256, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+        ),
+        3: lambda: nn.Sequential(
+            nn.Conv2d(384, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+        ),
+        4: lambda: nn.Sequential(
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        ),
+        5: lambda: nn.Sequential(
+            nn.AdaptiveAvgPool2d((6, 6)),
+            nn.Flatten(start_dim=1),
+        ),
+        6: lambda: nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(256 * 6 * 6, 4096),
+            nn.ReLU(inplace=True),
+        ),
+        7: lambda: nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+        ),
+        8: lambda: nn.Linear(4096, num_classes),
+    }
+    try:
+        return stages[layer_index]()
+    except KeyError as exc:
+        raise ValueError(f"Unknown AlexNet stage {layer_index}.") from exc
+
+
+def _build_seeded_stage(layer_index, num_classes, seed):
+    if seed is None:
+        return _build_stage(layer_index, num_classes)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(seed) + layer_index)
+        return _build_stage(layer_index, num_classes)
+
+
+def _load_checkpoint_state(path):
+    checkpoint = torch.load(path, map_location="cpu")
+    if isinstance(checkpoint, nn.Module):
+        state = checkpoint.state_dict()
+    elif isinstance(checkpoint, dict):
+        state = checkpoint
+        for key in ("model_state_dict", "state_dict", "model"):
+            if key not in checkpoint:
+                continue
+            state = checkpoint[key]
+            if isinstance(state, nn.Module):
+                state = state.state_dict()
+            break
+    else:
+        raise TypeError(f"Unsupported checkpoint type: {type(checkpoint)}")
+
+    if not isinstance(state, dict):
+        raise TypeError("Checkpoint does not contain a model state dictionary.")
+    return OrderedDict(
+        (key.removeprefix("module."), value) for key, value in state.items()
+    )
 
 
 class AlexNet(nn.Module):
@@ -46,49 +125,11 @@ class AlexNet(nn.Module):
         "classifier.6.": "layers.8.",
     }
 
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, seed=None):
         super().__init__()
         self.layers = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(3, 96, kernel_size=11, stride=4, padding=2),
-                    nn.ReLU(inplace=True),
-                    nn.MaxPool2d(kernel_size=3, stride=2),
-                ),
-                nn.Sequential(
-                    nn.Conv2d(96, 256, kernel_size=5, padding=2),
-                    nn.ReLU(inplace=True),
-                    nn.MaxPool2d(kernel_size=3, stride=2),
-                ),
-                nn.Sequential(
-                    nn.Conv2d(256, 384, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True),
-                ),
-                nn.Sequential(
-                    nn.Conv2d(384, 384, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True),
-                ),
-                nn.Sequential(
-                    nn.Conv2d(384, 256, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True),
-                    nn.MaxPool2d(kernel_size=3, stride=2),
-                ),
-                nn.Sequential(
-                    nn.AdaptiveAvgPool2d((6, 6)),
-                    nn.Flatten(start_dim=1),
-                ),
-                nn.Sequential(
-                    nn.Dropout(),
-                    nn.Linear(256 * 6 * 6, 4096),
-                    nn.ReLU(inplace=True),
-                ),
-                nn.Sequential(
-                    nn.Dropout(),
-                    nn.Linear(4096, 4096),
-                    nn.ReLU(inplace=True),
-                ),
-                nn.Linear(4096, num_classes),
-            ]
+            _build_seeded_stage(layer_index, num_classes, seed)
+            for layer_index in range(len(self.LAYER_NAMES))
         )
 
     @property
@@ -183,3 +224,92 @@ class AlexNet(nn.Module):
         if cut_layer is None:
             return self.forward_range(x)
         return self.forward_to(x, cut_layer)
+
+
+class AlexNetEdge(nn.Module):
+    """Memory-efficient AlexNet edge partition for one runtime cut."""
+
+    def __init__(self, cut_layer, num_classes=10, seed=42, checkpoint=None):
+        super().__init__()
+        self.cut_layer = AlexNet.validate_cut_layer(cut_layer)
+        self.layers = nn.ModuleList(
+            _build_seeded_stage(layer_index, num_classes, seed)
+            for layer_index in range(self.cut_layer + 1)
+        )
+        if checkpoint is not None:
+            self.load_global_checkpoint(checkpoint)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+    def load_global_checkpoint(self, path):
+        state = _load_checkpoint_state(path)
+        if any(key.startswith(tuple(AlexNet._LEGACY_STATE_PREFIXES)) for key in state):
+            state = AlexNet._upgrade_legacy_state_dict(state)
+        target_keys = set(self.state_dict())
+        edge_state = {key: value for key, value in state.items() if key in target_keys}
+        self.load_state_dict(edge_state, strict=True)
+
+
+class AlexNetDynamicServer(nn.Module):
+    """AlexNet server partition that routes activations from multiple cuts."""
+
+    def __init__(
+        self,
+        supported_cut_layers,
+        num_classes=10,
+        seed=42,
+        checkpoint=None,
+    ):
+        super().__init__()
+        self.supported_cut_layers = self._normalize_cut_layers(
+            supported_cut_layers
+        )
+        self.min_cut_layer = min(self.supported_cut_layers)
+        self.global_layer_indices = list(
+            range(self.min_cut_layer + 1, len(AlexNet.LAYER_NAMES))
+        )
+        self.layers = nn.ModuleList(
+            _build_seeded_stage(layer_index, num_classes, seed)
+            for layer_index in self.global_layer_indices
+        )
+        if checkpoint is not None:
+            self.load_global_checkpoint(checkpoint)
+
+    @staticmethod
+    def _normalize_cut_layers(cut_layers):
+        if isinstance(cut_layers, int) and not isinstance(cut_layers, bool):
+            cut_layers = [cut_layers]
+        if not isinstance(cut_layers, (list, tuple)) or not cut_layers:
+            raise ValueError("supported_cut_layers must contain at least one cut.")
+        return sorted({AlexNet.validate_cut_layer(cut) for cut in cut_layers})
+
+    def _local_index(self, global_layer_index):
+        return global_layer_index - (self.min_cut_layer + 1)
+
+    def forward(self, x, cut_layer):
+        cut_layer = AlexNet.validate_cut_layer(cut_layer)
+        if cut_layer not in self.supported_cut_layers:
+            raise ValueError(
+                f"cut_layer={cut_layer} was not configured for this server; "
+                f"configured values: {self.supported_cut_layers}."
+            )
+        for global_index in range(cut_layer + 1, len(AlexNet.LAYER_NAMES)):
+            x = self.layers[self._local_index(global_index)](x)
+        return x
+
+    def load_global_checkpoint(self, path):
+        state = _load_checkpoint_state(path)
+        if any(key.startswith(tuple(AlexNet._LEGACY_STATE_PREFIXES)) for key in state):
+            state = AlexNet._upgrade_legacy_state_dict(state)
+
+        server_state = {}
+        for local_index, global_index in enumerate(self.global_layer_indices):
+            global_prefix = f"layers.{global_index}."
+            local_prefix = f"layers.{local_index}."
+            for key, value in state.items():
+                if key.startswith(global_prefix):
+                    server_state[local_prefix + key[len(global_prefix):]] = value
+        self.load_state_dict(server_state, strict=True)

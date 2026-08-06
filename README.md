@@ -107,6 +107,80 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 
+## AlexNet/MNIST classification SFL
+
+The classification path is selected by `task: classification` and runs beside
+the existing YOLO detection path. Its edge and dynamic-server trainers use
+cross-entropy loss and report accuracy, macro precision, macro recall, and
+macro F1. Detection models, losses, and mAP metrics remain unchanged.
+
+Use the provided configuration with Docker Compose:
+
+```bash
+SFL_CONFIG=config_alexnet_mnist.yaml \
+docker compose up --build --scale torch_1=4
+```
+
+The default `SFL_CONFIG` remains `config.yaml`, so the existing detection
+command continues to use YOLO. To run the classification processes directly,
+start RabbitMQ and then launch one coordinator, four edge workers, and one
+dynamic-server worker:
+
+```bash
+python main.py --layer_id 0 --config config_alexnet_mnist.yaml
+python main.py --layer_id 1 --config config_alexnet_mnist.yaml  # four terminals
+python main.py --layer_id 2 --config config_alexnet_mnist.yaml
+```
+
+For processes running on the host instead of in Compose, set
+`rabbitmq.host: localhost` in the classification config.
+
+AlexNet stages are numbered 0 through 8 and valid split points are 0 through
+7. The global MNIST test split is used for validation. Results are written to
+`classification_results.csv` in the coordinator run directory, together with
+`best.pt`, `last.pt`, and `alexnet_split_graph.txt`. The graph is also printed
+in the coordinator log after all edge metadata arrives. MLflow logging is
+optional and disabled by default in `config_alexnet_mnist.yaml`.
+
+### Split MNIST among clients
+
+Create four non-IID index shards using a label-based Dirichlet distribution:
+
+```bash
+python scripts/split_mnist_dirichlet.py \
+  --mode dirichlet --alpha 0.5 --num-clients 4 --seed 42
+```
+
+For a balanced IID split:
+
+```bash
+python scripts/split_mnist_dirichlet.py \
+  --mode iid --num-clients 4 --seed 42
+```
+
+The output contains one `client_N_indices.pt` shard per client, class count and
+ratio CSV files, a complete index manifest, JSON metadata, and
+`class_distribution_heatmap.png`. To train with the generated shards, set the
+following field in `config_alexnet_mnist.yaml`:
+
+```yaml
+dataset:
+  split_dir: data/mnist_splits/mnist_dirichlet_alpha_0p5
+```
+
+At startup, the coordinator validates that the shards are disjoint, reads each
+client's index list and class statistics, and sends only that descriptor to the
+matching edge client through RabbitMQ. The client then constructs its local
+`Subset(MNIST, indices)`; raw MNIST images are not copied through the broker.
+When `dataset.auto_create_split: true`, a completely missing or empty
+`split_dir` is generated automatically using `split_mode`, `dirichlet_alpha`,
+`split_seed`, and `subset_fraction` from the configuration. An existing but
+incomplete directory is never overwritten automatically.
+
+Use `--overwrite` to intentionally replace a split generated earlier with the
+same output path. The official MNIST test set is not partitioned and remains
+the shared global validation set.
+
 ## Centralized YOLO11 baseline
 
 The centralized trainer uses `model.YOLO11_Full` directly with the complete

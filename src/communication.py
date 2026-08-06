@@ -174,7 +174,14 @@ class Communication:
                 
             self.publish_message(f'client_queue_{client_id}', pickle.dumps(payload))
 
-    def send_training_metadata(self, queue_name, client_id, nb_train = None, nb_val = None):
+    def send_training_metadata(
+        self,
+        queue_name,
+        client_id,
+        nb_train=None,
+        nb_val=None,
+        num_samples=None,
+    ):
         """
         Sends training metadata (number of training and validation batches) to a queue.
         """
@@ -182,7 +189,8 @@ class Communication:
             'action': 'send_number_batch',
             'client_id': client_id,
             'nb_train': nb_train,
-            'nb_val': nb_val
+            'nb_val': nb_val,
+            'num_samples': num_samples,
         }
         self.publish_message(queue_name, pickle.dumps(payload))
 
@@ -196,6 +204,7 @@ class Communication:
         loss_items=None,
         latencies=None,
         route_batch_counts=None,
+        metrics=None,
     ):
 
         try:
@@ -232,6 +241,9 @@ class Communication:
 
                 if route_batch_counts is not None:
                     payload['route_batch_counts'] = dict(route_batch_counts)
+
+                if metrics is not None:
+                    payload['metrics'] = dict(metrics)
 
             self.publish_message(queue_name, pickle.dumps(payload))
             print(f"Successfully published model from {model_path} to '{queue_name}'")
