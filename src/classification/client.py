@@ -10,7 +10,7 @@ from src.utils import create_run_dir
 
 
 class ClassificationClient:
-    """RabbitMQ worker for the AlexNet/MNIST SFL task."""
+    """RabbitMQ worker for a registered classification SFL task."""
 
     def __init__(self, config, device, project_root, layer_id, client_id):
         self.config = config

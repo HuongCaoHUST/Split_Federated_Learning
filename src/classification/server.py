@@ -8,14 +8,20 @@ from rich.console import Console
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from model.Alexnet import AlexNet
 from src.classification.aggregation import merge_classification_models
 from src.classification.data import (
-    MNIST_CLASS_NAMES,
-    build_mnist_client_descriptors,
-    build_mnist_validation_dataset,
+    build_client_descriptors,
+    build_validation_dataset,
+    get_class_names,
+    get_dataset_name,
 )
 from src.classification.metrics import ClassificationMetrics
+from src.classification.models import (
+    build_full_model,
+    get_model_name,
+    get_model_spec,
+    validate_classification_config,
+)
 from src.communication import Communication
 from scripts.draw import draw_graph
 from src.utils import (
@@ -26,12 +32,17 @@ from src.utils import (
 
 
 class ClassificationServer:
-    """Coordinator for dynamic-cut AlexNet split-federated learning."""
+    """Coordinator for registry-backed dynamic-cut classification SFL."""
 
     def __init__(self, config, device, project_root):
         self.config = config
         self.device = device
         self.project_root = project_root
+        validate_classification_config(config)
+        self.dataset_name = get_dataset_name(config)
+        self.class_names = get_class_names(config)
+        self.model_name = get_model_name(config)
+        self.model_spec = get_model_spec(config)
         self.num_clients = list(config["clients"])
         if len(self.num_clients) != 2 or any(count < 1 for count in self.num_clients):
             raise ValueError("clients must contain positive [edge, server] counts.")
@@ -39,7 +50,7 @@ class ClassificationServer:
             config, self.num_clients[0]
         )
         for cut in self.client_cut_layers:
-            AlexNet.validate_cut_layer(cut)
+            self.model_spec.validate_cut_layer(cut)
         self.minimum_cut_layer = get_server_cut_layer(self.client_cut_layers)
 
         training = config["training"]
@@ -47,10 +58,9 @@ class ClassificationServer:
         self.num_workers = int(training.get("num_workers", 0))
         self.num_epochs = int(training["num_epochs"])
         self.num_rounds = int(training["num_rounds"])
-        self.num_classes = int(config.get("model", {}).get("num_classes", 10))
-        if self.num_classes != len(MNIST_CLASS_NAMES):
-            raise ValueError("MNIST classification requires model.num_classes=10.")
-        self.model_seed = int(config.get("model", {}).get("seed", 42))
+        self.num_classes = int(
+            config.get("model", {}).get("num_classes", len(self.class_names))
+        )
 
         self.comm = Communication(config)
         self.run_dir = create_run_dir(project_root, layer_id=0)
@@ -73,17 +83,19 @@ class ClassificationServer:
         connector = MLflowConnector(
             tracking_uri=mlflow_config["tracking_uri"],
             experiment_name=mlflow_config.get(
-                "experiment_name", "SFL_AlexNet_MNIST"
+                "experiment_name", f"SFL_{self.model_name}_{self.dataset_name}"
             ),
         )
         connector.start_run(
-            run_name=mlflow_config.get("run_name", "AlexNet dynamic-cut SFL")
+            run_name=mlflow_config.get(
+                "run_name", f"{self.model_name} dynamic-cut SFL"
+            )
         )
         connector.log_params(
             {
                 "task": "classification",
-                "model": "AlexNet",
-                "dataset": "MNIST",
+                "model": self.model_name,
+                "dataset": self.dataset_name,
                 "batch_size": self.batch_size,
                 "num_epochs": self.num_epochs,
                 "num_rounds": self.num_rounds,
@@ -100,9 +112,9 @@ class ClassificationServer:
         )
         self.comm.create_queue("intermediate_queue")
         self.comm.create_queue("server_queue")
-        # Download/cache MNIST once in the coordinator before edge workers
-        # construct their shards from the shared project volume.
-        build_mnist_validation_dataset(self.config, self.project_root)
+        # Download/cache the dataset once before edge workers construct shards
+        # from the shared project volume.
+        build_validation_dataset(self.config, self.project_root)
         self.comm.consume_messages("server_queue", self.on_message)
 
     def on_message(self, ch, method, properties, body):
@@ -143,7 +155,7 @@ class ClassificationServer:
 
         if self.registered == self.num_clients:
             edge_ids = self.get_client_ids(layer_id=1)
-            descriptors_by_index = build_mnist_client_descriptors(
+            descriptors_by_index = build_client_descriptors(
                 self.config, self.project_root, self.num_clients[0]
             )
             dataset_descriptors = [
@@ -189,14 +201,14 @@ class ClassificationServer:
             server_ids,
             nb=allocations,
             nc=self.num_classes,
-            class_names=MNIST_CLASS_NAMES,
+            class_names=self.class_names,
             cut_layers=[self.minimum_cut_layer] * len(server_ids),
             supported_cut_layers=self.client_cut_layers,
         )
         self.server_workers_started = True
 
     def draw_client_graph(self):
-        """Print and save the AlexNet split graph once metadata is complete."""
+        """Print and save the configured model split graph once."""
         if self.graph_drawn:
             return
         edge_ids = self.get_client_ids(layer_id=1)
@@ -216,17 +228,17 @@ class ClassificationServer:
         console = Console(record=True)
         draw_graph(
             client_data,
-            max_layer=len(AlexNet.LAYER_NAMES) - 1,
+            max_layer=len(self.model_spec.layer_names) - 1,
             output=console,
             scale=max(
                 2,
                 max(len(str(client["image_count"])) for client in client_data) + 2,
             ),
         )
-        graph_path = os.path.join(self.run_dir, "alexnet_split_graph.txt")
+        graph_path = os.path.join(self.run_dir, "classification_split_graph.txt")
         console.save_text(graph_path, clear=False)
         self.graph_drawn = True
-        print(f"AlexNet split graph saved to {graph_path}")
+        print(f"{self.model_name} split graph saved to {graph_path}")
 
     def _receive_model(self, payload):
         client_id = payload["client_id"]
@@ -277,9 +289,7 @@ class ClassificationServer:
         ):
             return
 
-        full_model = AlexNet(
-            num_classes=self.num_classes, seed=self.model_seed
-        )
+        full_model = build_full_model(self.config)
         self.model = merge_classification_models(
             full_model,
             edge_models,
@@ -394,7 +404,7 @@ class ClassificationServer:
         }
 
     def validate(self):
-        validation_dataset = build_mnist_validation_dataset(
+        validation_dataset = build_validation_dataset(
             self.config, self.project_root
         )
         loader = DataLoader(
@@ -410,7 +420,9 @@ class ClassificationServer:
         sample_count = 0
         self.model.eval()
         with torch.no_grad():
-            for images, labels in tqdm(loader, desc="MNIST validation"):
+            for images, labels in tqdm(
+                loader, desc=f"{self.dataset_name} validation"
+            ):
                 images = images.to(self.device, non_blocking=True)
                 labels = labels.to(self.device, non_blocking=True)
                 logits = self.model(images)
@@ -428,7 +440,9 @@ class ClassificationServer:
             "model_state_dict": self.model.state_dict(),
             "epoch": self.current_epoch,
             "num_classes": self.num_classes,
-            "class_names": MNIST_CLASS_NAMES,
+            "class_names": self.class_names,
+            "dataset": self.dataset_name,
+            "model_name": self.model_name,
             "metrics": metrics,
             "task": "classification",
         }

@@ -71,10 +71,12 @@ def dirichlet_partition(
     num_clients: int,
     alpha: float,
     rng: np.random.Generator,
+    class_names: tuple[str, ...] = CLASS_NAMES,
+    dataset_name: str = "MNIST",
 ) -> list[list[int]]:
     """Allocate every class independently using Dirichlet client proportions."""
     partitions = [[] for _ in range(num_clients)]
-    for class_id in range(len(CLASS_NAMES)):
+    for class_id in range(len(class_names)):
         class_indices = sample_indices[targets[sample_indices] == class_id]
         class_indices = rng.permutation(class_indices)
         proportions = rng.dirichlet(
@@ -87,37 +89,45 @@ def dirichlet_partition(
 
     for partition in partitions:
         rng.shuffle(partition)
-    _ensure_nonempty_partitions(partitions, rng)
+    _ensure_nonempty_partitions(partitions, rng, dataset_name)
     return partitions
 
 
 def _ensure_nonempty_partitions(
-    partitions: list[list[int]], rng: np.random.Generator
+    partitions: list[list[int]],
+    rng: np.random.Generator,
+    dataset_name: str = "MNIST",
 ) -> None:
     for partition in partitions:
         if partition:
             continue
         donor = max(partitions, key=len)
         if len(donor) <= 1:
-            raise ValueError("Cannot give every client at least one MNIST sample.")
+            raise ValueError(
+                f"Cannot give every client at least one {dataset_name} sample."
+            )
         partition.append(donor.pop(int(rng.integers(len(donor)))))
 
 
 def class_counts(
-    partitions: list[list[int]], targets: np.ndarray
+    partitions: list[list[int]],
+    targets: np.ndarray,
+    class_names: tuple[str, ...] = CLASS_NAMES,
 ) -> np.ndarray:
-    counts = np.zeros((len(partitions), len(CLASS_NAMES)), dtype=np.int64)
+    counts = np.zeros((len(partitions), len(class_names)), dtype=np.int64)
     for client_id, indices in enumerate(partitions):
         if indices:
             counts[client_id] = np.bincount(
                 targets[np.asarray(indices, dtype=np.int64)],
-                minlength=len(CLASS_NAMES),
+                minlength=len(class_names),
             )
     return counts
 
 
 def validate_partitions(
-    partitions: list[list[int]], selected_indices: np.ndarray
+    partitions: list[list[int]],
+    selected_indices: np.ndarray,
+    dataset_name: str = "MNIST",
 ) -> None:
     flattened = [index for partition in partitions for index in partition]
     if len(flattened) != len(selected_indices):
@@ -125,7 +135,9 @@ def validate_partitions(
     if len(set(flattened)) != len(flattened):
         raise ValueError("A sample was assigned to more than one client.")
     if set(flattened) != set(selected_indices.astype(int).tolist()):
-        raise ValueError("The split indices do not match the selected MNIST subset.")
+        raise ValueError(
+            f"The split indices do not match the selected {dataset_name} subset."
+        )
     if any(not partition for partition in partitions):
         raise ValueError("Every client must receive at least one sample.")
 
@@ -146,6 +158,7 @@ def write_index_shards(
     output_dir: Path,
     partitions: list[list[int]],
     counts: np.ndarray,
+    class_names: tuple[str, ...] = CLASS_NAMES,
 ) -> list[Path]:
     shard_paths = []
     for client_id, indices in enumerate(partitions, start=1):
@@ -157,7 +170,7 @@ def write_index_shards(
             "num_samples": len(indices),
             "class_counts": {
                 class_name: int(counts[client_id - 1, class_index])
-                for class_index, class_name in enumerate(CLASS_NAMES)
+                for class_index, class_name in enumerate(class_names)
             },
         }
         (output_dir / f"client_{client_id}.json").write_text(
@@ -171,8 +184,9 @@ def write_distribution_files(
     partitions: list[list[int]],
     targets: np.ndarray,
     counts: np.ndarray,
+    class_names: tuple[str, ...] = CLASS_NAMES,
 ) -> None:
-    fieldnames = ["client_id", "num_samples", *CLASS_NAMES]
+    fieldnames = ["client_id", "num_samples", *class_names]
     with (output_dir / "class_distribution_counts.csv").open(
         "w", newline="", encoding="utf-8"
     ) as output_file:
@@ -183,7 +197,7 @@ def write_distribution_files(
             row.update(
                 {
                     class_name: int(counts[client_id - 1, class_index])
-                    for class_index, class_name in enumerate(CLASS_NAMES)
+                    for class_index, class_name in enumerate(class_names)
                 }
             )
             writer.writerow(row)
@@ -199,7 +213,7 @@ def write_distribution_files(
             row.update(
                 {
                     class_name: float(counts[client_id - 1, class_index] / denominator)
-                    for class_index, class_name in enumerate(CLASS_NAMES)
+                    for class_index, class_name in enumerate(class_names)
                 }
             )
             writer.writerow(row)
@@ -221,18 +235,20 @@ def save_heatmap(
     counts: np.ndarray,
     mode: str,
     alpha: float,
+    class_names: tuple[str, ...] = CLASS_NAMES,
+    dataset_name: str = "MNIST",
 ) -> None:
     figure, axis = plt.subplots(figsize=(10.5, max(4.8, counts.shape[0] * 0.7)))
     image = axis.imshow(counts, aspect="auto", cmap="YlOrRd")
-    axis.set_xlabel("MNIST class")
+    axis.set_xlabel(f"{dataset_name} class")
     axis.set_ylabel("Client")
-    axis.set_xticks(np.arange(len(CLASS_NAMES)))
-    axis.set_xticklabels(CLASS_NAMES)
+    axis.set_xticks(np.arange(len(class_names)))
+    axis.set_xticklabels(class_names, rotation=30, ha="right")
     axis.set_yticks(np.arange(counts.shape[0]))
     axis.set_yticklabels(
         [f"client_{client_id}" for client_id in range(1, counts.shape[0] + 1)]
     )
-    title = f"MNIST train distribution: {mode}"
+    title = f"{dataset_name} train distribution: {mode}"
     if mode == "dirichlet":
         title += f", alpha={alpha}"
     axis.set_title(title)

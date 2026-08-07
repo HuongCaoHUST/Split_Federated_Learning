@@ -10,9 +10,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from model.Alexnet import AlexNetDynamicServer, AlexNetEdge
-from src.classification.data import build_mnist_client_dataset
+from src.classification.data import build_client_dataset, get_dataset_name
 from src.classification.metrics import ClassificationMetrics
+from src.classification.models import (
+    build_edge_model,
+    build_server_model,
+    get_model_name,
+)
 from src.utils import BatchLogger, get_cut_layer, get_cut_layers
 
 
@@ -68,13 +72,14 @@ class ClassificationEdgeTrainer:
         self.num_epochs = int(config["training"]["num_epochs"])
         self.cut_layer = get_cut_layer(config)
         self.num_classes = int(config.get("model", {}).get("num_classes", 10))
-        self.model_seed = int(config.get("model", {}).get("seed", 42))
 
         if not isinstance(dataset_descriptor, dict):
             raise TypeError("Classification edge requires a dataset descriptor.")
         client_index = int(dataset_descriptor["client_index"])
         num_clients = int(dataset_descriptor["num_clients"])
-        train_dataset = build_mnist_client_dataset(
+        self.dataset_name = get_dataset_name(config)
+        self.model_name = get_model_name(config)
+        train_dataset = build_client_dataset(
             config,
             project_root,
             client_index,
@@ -83,7 +88,7 @@ class ClassificationEdgeTrainer:
         )
         print(
             f"Client {client_index + 1}/{num_clients} received "
-            f"{len(train_dataset)} MNIST samples; "
+            f"{len(train_dataset)} {self.dataset_name} samples; "
             f"class_counts={dataset_descriptor.get('class_counts', {})}."
         )
         self.num_train_samples = len(train_dataset)
@@ -95,10 +100,9 @@ class ClassificationEdgeTrainer:
             pin_memory=self.device.type == "cuda",
         )
 
-        self.model = AlexNetEdge(
+        self.model = build_edge_model(
+            config,
             cut_layer=self.cut_layer,
-            num_classes=self.num_classes,
-            seed=self.model_seed,
             checkpoint=global_model_path,
         ).to(self.device)
         self.optimizer = _build_optimizer(self.model, config)
@@ -117,7 +121,10 @@ class ClassificationEdgeTrainer:
         epoch_latency_sum = np.zeros(7, dtype=np.float64)
         progress = tqdm(
             self.train_loader,
-            desc=f"Epoch {local_epoch + 1}/{self.num_epochs} [AlexNet edge]",
+            desc=(
+                f"Epoch {local_epoch + 1}/{self.num_epochs} "
+                f"[{self.model_name} edge]"
+            ),
         )
 
         for images, labels in progress:
@@ -180,7 +187,7 @@ class ClassificationEdgeTrainer:
             progress.set_postfix(loss=f"{float(response['loss']):.4f}")
 
         if sample_count == 0:
-            raise ValueError("The MNIST client shard contains no samples.")
+            raise ValueError(f"The {self.dataset_name} client shard is empty.")
         return loss_sum / sample_count, epoch_latency_sum / len(self.train_loader)
 
     def run(self):
@@ -196,7 +203,7 @@ class ClassificationEdgeTrainer:
             train_loss, latencies = self.train_one_epoch(local_epoch, global_epoch)
             checkpoint_path = os.path.join(
                 self.run_dir,
-                f"alexnet_edge_{self.client_id}_epoch_{global_epoch + 1}.pt",
+                f"classification_edge_{self.client_id}_epoch_{global_epoch + 1}.pt",
             )
             torch.save(self.model.state_dict(), checkpoint_path)
             self.comm.publish_model(
@@ -234,10 +241,10 @@ class ClassificationServerTrainer:
         self.num_epochs = int(config["training"]["num_epochs"])
         self.num_classes = int(config.get("model", {}).get("num_classes", 10))
         self.cut_layers = get_cut_layers(config)
-        self.model = AlexNetDynamicServer(
+        self.model_name = get_model_name(config)
+        self.model = build_server_model(
+            config,
             supported_cut_layers=self.cut_layers,
-            num_classes=self.num_classes,
-            seed=int(config.get("model", {}).get("seed", 42)),
             checkpoint=global_model_path,
         ).to(self.device)
         self.optimizer = _build_optimizer(self.model, config)
@@ -270,7 +277,10 @@ class ClassificationServerTrainer:
         route_batch_counts = {cut: 0 for cut in self.cut_layers}
         progress = tqdm(
             range(self.num_batches),
-            desc=f"Epoch {local_epoch + 1}/{self.num_epochs} [AlexNet server]",
+            desc=(
+                f"Epoch {local_epoch + 1}/{self.num_epochs} "
+                f"[{self.model_name} server]"
+            ),
         )
 
         for _ in progress:

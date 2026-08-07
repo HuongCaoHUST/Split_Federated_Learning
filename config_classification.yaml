@@ -1,0 +1,64 @@
+# Generic split-learning classification config.
+# Registered datasets: MNIST, CIFAR10.
+# Registered split models: AlexNet. New models are added in
+# src/classification/models.py without changing trainers or coordinator code.
+task: classification
+
+clients:
+  - 4  # edge workers
+  - 1  # dynamic server workers
+
+training:
+  num_epochs: 1
+  num_rounds: 2
+  batch_size: 64
+  learning_rate: 0.0001
+  optimizer: Adam
+  weight_decay: 0.0001
+  momentum: 0.9
+  num_workers: 2
+
+model:
+  name: AlexNet
+  num_classes: 10
+  seed: 42
+  save_model: true
+
+# Inclusive global stage assigned to each edge client. The selected model
+# registry validates these values. AlexNet currently supports 0..7.
+cut_layer:
+  - 1
+  - 2
+  - 3
+  - 4
+
+dataset:
+  # Change only this value to MNIST or CIFAR10. With split_dir: auto, the
+  # matching dataset and shard directory are selected automatically.
+  name: CIFAR10
+  root: data
+  split_dir: auto
+  auto_create_split: true
+  split_mode: dirichlet
+  dirichlet_alpha: 0.5
+  split_seed: 42
+  subset_fraction: 1.0
+  input_size: 224
+  channels: 3
+  augmentation: true  # Applied only to the CIFAR10 training set.
+  download: true
+
+mlflow:
+  enabled: false
+  tracking_uri: http://smart-hvac.io.vn:5005/
+  experiment_name: SFL_Classification
+
+rabbitmq:
+  host: rabbitmq
+  port: 5672
+  username: guest
+  password: guest
+  max_retries: 5
+  retry_delay: 5
+
+startup_delay: 5

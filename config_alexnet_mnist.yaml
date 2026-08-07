@@ -35,6 +35,8 @@ dataset:
   split_mode: dirichlet
   dirichlet_alpha: 0.5
   input_size: 224
+  channels: 3
+  augmentation: false
   download: true
   split_seed: 42
   subset_fraction: 1.0

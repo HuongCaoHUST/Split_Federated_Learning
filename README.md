@@ -107,17 +107,18 @@ The main behavior of the system is controlled by `config.yaml`.
 -   `dataset`: Path to the dataset configuration YAML file(s).
 -   `rabbitmq`: Connection details for the RabbitMQ server.
 
-## AlexNet/MNIST classification SFL
+## Configurable classification SFL
 
 The classification path is selected by `task: classification` and runs beside
-the existing YOLO detection path. Its edge and dynamic-server trainers use
-cross-entropy loss and report accuracy, macro precision, macro recall, and
-macro F1. Detection models, losses, and mAP metrics remain unchanged.
+the existing YOLO detection path. Dataset and split-model implementations are
+selected through registries, so trainers and the coordinator do not depend on
+AlexNet or MNIST directly. MNIST and CIFAR-10 are currently registered as
+datasets; AlexNet is the first registered dynamic split model.
 
 Use the provided configuration with Docker Compose:
 
 ```bash
-SFL_CONFIG=config_alexnet_mnist.yaml \
+SFL_CONFIG=config_classification.yaml \
 docker compose up --build --scale torch_1=4
 ```
 
@@ -127,20 +128,33 @@ start RabbitMQ and then launch one coordinator, four edge workers, and one
 dynamic-server worker:
 
 ```bash
-python main.py --layer_id 0 --config config_alexnet_mnist.yaml
-python main.py --layer_id 1 --config config_alexnet_mnist.yaml  # four terminals
-python main.py --layer_id 2 --config config_alexnet_mnist.yaml
+python main.py --layer_id 0 --config config_classification.yaml
+python main.py --layer_id 1 --config config_classification.yaml  # four terminals
+python main.py --layer_id 2 --config config_classification.yaml
 ```
 
 For processes running on the host instead of in Compose, set
 `rabbitmq.host: localhost` in the classification config.
 
+Choose the dataset and model in one config:
+
+```yaml
+model:
+  name: AlexNet
+  num_classes: 10
+
+dataset:
+  name: CIFAR10  # or MNIST
+  split_dir: auto
+  input_size: 224
+  channels: 3
+```
+
+With `split_dir: auto`, changing `dataset.name` is enough to select the correct
+download, transforms, validation set, split script, and shard directory.
 AlexNet stages are numbered 0 through 8 and valid split points are 0 through
-7. The global MNIST test split is used for validation. Results are written to
-`classification_results.csv` in the coordinator run directory, together with
-`best.pt`, `last.pt`, and `alexnet_split_graph.txt`. The graph is also printed
-in the coordinator log after all edge metadata arrives. MLflow logging is
-optional and disabled by default in `config_alexnet_mnist.yaml`.
+7. Results are written to `classification_results.csv` with `best.pt`,
+`last.pt`, and `classification_split_graph.txt`.
 
 ### Split MNIST among clients
 
@@ -158,28 +172,44 @@ python scripts/split_mnist_dirichlet.py \
   --mode iid --num-clients 4 --seed 42
 ```
 
-The output contains one `client_N_indices.pt` shard per client, class count and
-ratio CSV files, a complete index manifest, JSON metadata, and
-`class_distribution_heatmap.png`. To train with the generated shards, set the
-following field in `config_alexnet_mnist.yaml`:
+### Split CIFAR-10 among clients
+
+The CIFAR-10 splitter has the same IID/Dirichlet options and keeps the official
+10,000-image test set as shared validation data:
+
+```bash
+python scripts/split_cifar10_dirichlet.py \
+  --mode dirichlet --alpha 0.5 --num-clients 4 --seed 42
+```
+
+For an IID split, replace `--mode dirichlet` with `--mode iid`.
+
+Both splitters produce one `client_N_indices.pt` shard per client, class count
+and ratio CSV files, a complete index manifest, JSON metadata, and
+`class_distribution_heatmap.png`. You can use an explicit shard path:
 
 ```yaml
 dataset:
-  split_dir: data/mnist_splits/mnist_dirichlet_alpha_0p5
+  name: CIFAR10
+  split_dir: data/cifar10_splits/cifar10_dirichlet_alpha_0p5
 ```
 
 At startup, the coordinator validates that the shards are disjoint, reads each
 client's index list and class statistics, and sends only that descriptor to the
 matching edge client through RabbitMQ. The client then constructs its local
-`Subset(MNIST, indices)`; raw MNIST images are not copied through the broker.
+`Subset(dataset, indices)`; raw images are not copied through the broker.
 When `dataset.auto_create_split: true`, a completely missing or empty
 `split_dir` is generated automatically using `split_mode`, `dirichlet_alpha`,
 `split_seed`, and `subset_fraction` from the configuration. An existing but
 incomplete directory is never overwritten automatically.
 
 Use `--overwrite` to intentionally replace a split generated earlier with the
-same output path. The official MNIST test set is not partitioned and remains
-the shared global validation set.
+same output path. The official MNIST or CIFAR-10 test set is not partitioned.
+
+To add another split model, register its full, edge, and dynamic-server classes
+in `src/classification/models.py`. The implementation must expose global
+stages through `layers`, declare `LAYER_NAMES` and `SUPPORTED_CUT_LAYERS`, and
+use local `layers` indices in edge/server checkpoints for generic aggregation.
 
 ## Centralized YOLO11 baseline
 

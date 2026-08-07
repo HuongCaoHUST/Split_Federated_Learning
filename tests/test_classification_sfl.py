@@ -129,11 +129,15 @@ def test_edge_server_trainers_exchange_activation_and_gradient(monkeypatch, tmp_
         def publish_model(self, queue_name, model_path, **kwargs):
             self.model_updates.append((queue_name, model_path, kwargs))
 
-    monkeypatch.setattr(trainers, "AlexNetEdge", TinyEdge)
-    monkeypatch.setattr(trainers, "AlexNetDynamicServer", TinyServer)
+    monkeypatch.setattr(
+        trainers, "build_edge_model", lambda *args, **kwargs: TinyEdge()
+    )
+    monkeypatch.setattr(
+        trainers, "build_server_model", lambda *args, **kwargs: TinyServer()
+    )
     monkeypatch.setattr(
         trainers,
-        "build_mnist_client_dataset",
+        "build_client_dataset",
         lambda *args, **kwargs: TensorDataset(
             torch.randn(2, 4), torch.tensor([1, 2])
         ),
@@ -147,6 +151,7 @@ def test_edge_server_trainers_exchange_activation_and_gradient(monkeypatch, tmp_
             "optimizer": "SGD",
         },
         "model": {"num_classes": 10, "seed": 42},
+        "dataset": {"name": "MNIST"},
         "cut_layer": [0],
     }
     communication = FakeCommunication()
