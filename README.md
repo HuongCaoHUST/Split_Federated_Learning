@@ -113,7 +113,8 @@ The classification path is selected by `task: classification` and runs beside
 the existing YOLO detection path. Dataset and split-model implementations are
 selected through registries, so trainers and the coordinator do not depend on
 AlexNet or MNIST directly. MNIST and CIFAR-10 are currently registered as
-datasets; AlexNet is the first registered dynamic split model.
+datasets; AlexNet, ResNet18, and MobileNetV2 are registered dynamic split
+models.
 
 Use the provided configuration with Docker Compose:
 
@@ -140,7 +141,7 @@ Choose the dataset and model in one config:
 
 ```yaml
 model:
-  name: AlexNet
+  name: ResNet18  # AlexNet, ResNet18, or MobileNetV2
   num_classes: 10
 
 dataset:
@@ -152,8 +153,9 @@ dataset:
 
 With `split_dir: auto`, changing `dataset.name` is enough to select the correct
 download, transforms, validation set, split script, and shard directory.
-AlexNet stages are numbered 0 through 8 and valid split points are 0 through
-7. Results are written to `classification_results.csv` with `best.pt`,
+Valid split points are 0 through 7 for AlexNet, 0 through 5 for ResNet18, and
+0 through 9 for MobileNetV2. Results are written to
+`classification_results.csv` with `best.pt`,
 `last.pt`, and `classification_split_graph.txt`.
 
 ### Split MNIST among clients

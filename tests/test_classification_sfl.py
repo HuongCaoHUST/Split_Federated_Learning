@@ -6,8 +6,16 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset
 
 from model.Alexnet import AlexNet
+from model.MobilenetV2 import MobileNetV2
+from model.Resnet18 import ResNet18
 from src.classification.aggregation import merge_classification_models
 from src.classification.metrics import ClassificationMetrics
+from src.classification.models import (
+    build_edge_model,
+    build_full_model,
+    build_server_model,
+    get_model_name,
+)
 from src.classification import trainers
 from src.task import get_task_name
 
@@ -87,6 +95,37 @@ def test_alexnet_rejects_a_cut_after_the_classifier():
         assert "leave at least one stage" in str(exc)
     else:
         raise AssertionError("The final classifier stage cannot be a split point.")
+
+
+def test_new_models_are_selectable_from_config():
+    for configured_name, expected_name, model_class in (
+        ("resnet-18", "ResNet18", ResNet18),
+        ("mobilenet_v2", "MobileNetV2", MobileNetV2),
+    ):
+        config = {
+            "model": {"name": configured_name, "num_classes": 10, "seed": 7},
+            "dataset": {"name": "CIFAR10"},
+        }
+        assert get_model_name(config) == expected_name
+        assert isinstance(build_full_model(config), model_class)
+
+
+def test_new_model_edge_and_server_match_full_forward():
+    inputs = torch.randn(2, 3, 64, 64)
+    for model_name, cut_layer in (("ResNet18", 2), ("MobileNetV2", 4)):
+        config = {
+            "model": {"name": model_name, "num_classes": 10, "seed": 11},
+            "dataset": {"name": "CIFAR10"},
+        }
+        full = build_full_model(config).eval()
+        edge = build_edge_model(config, cut_layer=cut_layer).eval()
+        server = build_server_model(
+            config, supported_cut_layers=[cut_layer]
+        ).eval()
+        with torch.no_grad():
+            expected = full(inputs)
+            actual = server(edge(inputs), cut_layer=cut_layer)
+        assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-5)
 
 
 def test_edge_server_trainers_exchange_activation_and_gradient(monkeypatch, tmp_path):

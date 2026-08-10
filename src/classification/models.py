@@ -11,6 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from model.Alexnet import AlexNet, AlexNetDynamicServer, AlexNetEdge
+from model.MobilenetV2 import (
+    MobileNetV2,
+    MobileNetV2DynamicServer,
+    MobileNetV2Edge,
+)
+from model.Resnet18 import ResNet18, ResNet18DynamicServer, ResNet18Edge
 from src.classification.data import get_class_names, get_dataset_name
 
 
@@ -44,6 +50,22 @@ MODEL_REGISTRY = {
         input_channels=3,
         minimum_input_size=63,
     ),
+    "RESNET18": ClassificationModelSpec(
+        name="ResNet18",
+        full_class=ResNet18,
+        edge_class=ResNet18Edge,
+        server_class=ResNet18DynamicServer,
+        input_channels=3,
+        minimum_input_size=32,
+    ),
+    "MOBILENETV2": ClassificationModelSpec(
+        name="MobileNetV2",
+        full_class=MobileNetV2,
+        edge_class=MobileNetV2Edge,
+        server_class=MobileNetV2DynamicServer,
+        input_channels=3,
+        minimum_input_size=32,
+    ),
 }
 
 
@@ -59,7 +81,11 @@ def _model_config(config):
 
 def _normalize_model_name(name) -> str:
     normalized = str(name).strip().upper().replace("-", "").replace("_", "")
-    aliases = {"ALEXNET": "ALEXNET"}
+    aliases = {
+        "ALEXNET": "ALEXNET",
+        "RESNET18": "RESNET18",
+        "MOBILENETV2": "MOBILENETV2",
+    }
     try:
         return aliases[normalized]
     except KeyError as exc:
