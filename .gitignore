@@ -25,3 +25,4 @@ __pycache__/
 *.zip
 /runs
 *.pyc
+tests
