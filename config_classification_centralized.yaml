@@ -1,0 +1,24 @@
+task: classification
+
+model:
+  name: AlexNet
+  num_classes: 10
+  seed: 42
+
+training:
+  num_epochs: 20
+  batch_size: 128
+  learning_rate: 0.0001
+  optimizer: Adam
+  weight_decay: 0.0001
+  num_workers: 2
+  device: auto
+  output_dir: results/classification_centralized/alexnet_cifar10
+
+dataset:
+  name: CIFAR10
+  root: data
+  input_size: 224
+  channels: 3
+  augmentation: true
+  download: true

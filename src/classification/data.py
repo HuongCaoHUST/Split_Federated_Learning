@@ -425,6 +425,11 @@ def build_validation_dataset(config, project_root):
     return Subset(dataset, range(min(max_samples, len(dataset))))
 
 
+def build_training_dataset(config, project_root):
+    """Build the complete training split for centralized classification."""
+    return _build_torchvision_dataset(config, project_root, train=True)
+
+
 # Backward-compatible MNIST API used by existing callers and external scripts.
 def build_mnist_transform(config):
     return build_classification_transform(config, train=False)

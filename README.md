@@ -213,6 +213,33 @@ in `src/classification/models.py`. The implementation must expose global
 stages through `layers`, declare `LAYER_NAMES` and `SUPPORTED_CUT_LAYERS`, and
 use local `layers` indices in edge/server checkpoints for generic aggregation.
 
+### Centralized classification baseline
+
+The centralized classification baseline trains the complete model on the full
+CIFAR10 training set and evaluates on the official CIFAR10 test set. It does
+not use RabbitMQ, client shards, or split layers.
+
+Run the provided AlexNet baseline from the repository root:
+
+```bash
+python train_classification_centralized.py \
+  --config config_classification_centralized.yaml
+```
+
+For a quick CPU smoke run:
+
+```bash
+python train_classification_centralized.py \
+  --config config_classification_centralized.yaml \
+  --epochs 1 --device cpu
+```
+
+The first run downloads CIFAR10 into `data/`. Results are written to the
+configured output directory, including `best.pt`, `last.pt`, and
+`classification_centralized_results.csv`. The trainer supports `AlexNet`,
+`ResNet18`, and `MobileNetV2` through the `model.name` setting, although the
+provided centralized config is intended for the AlexNet CIFAR10 baseline.
+
 ## Centralized YOLO11 baseline
 
 The centralized trainer uses `model.YOLO11_Full` directly with the complete
