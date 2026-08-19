@@ -26,3 +26,5 @@ __pycache__/
 /runs
 *.pyc
 tests
+*.pt
+*.png
